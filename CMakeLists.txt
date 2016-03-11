@@ -68,6 +68,8 @@ endif(WIN32)
 add_library(git2 SHARED ${sources})
 SET_TARGET_PROPERTIES(git2 PROPERTIES VERSION ${GIT2_VERSION} SOVERSION ${GIT2_MAJOR_VERSION})
 
+set(extra_install_dirs src/git2)
+
 
 # build examples
 
