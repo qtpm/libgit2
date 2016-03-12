@@ -5,7 +5,7 @@
  * a Linking Exception. For full terms see the included COPYING file.
  */
 
-#ifdef GIT_OPENSSL
+#ifdef GIT_SSL
 # include <openssl/err.h>
 #endif
 
@@ -14,7 +14,6 @@
 #include "sysdir.h"
 #include "cache.h"
 #include "global.h"
-#include "object.h"
 
 void git_libgit2_version(int *major, int *minor, int *rev)
 {
@@ -29,14 +28,11 @@ int git_libgit2_features()
 #ifdef GIT_THREADS
 		| GIT_FEATURE_THREADS
 #endif
-#if defined(GIT_OPENSSL) || defined(GIT_WINHTTP) || defined(GIT_SECURE_TRANSPORT)
+#if defined(GIT_SSL) || defined(GIT_WINHTTP)
 		| GIT_FEATURE_HTTPS
 #endif
 #if defined(GIT_SSH)
 		| GIT_FEATURE_SSH
-#endif
-#if defined(GIT_USE_NSEC)
-		| GIT_FEATURE_NSEC
 #endif
 	;
 }
@@ -50,31 +46,15 @@ static int config_level_to_sysdir(int config_level)
 	int val = -1;
 
 	switch (config_level) {
-	case GIT_CONFIG_LEVEL_SYSTEM:
-		val = GIT_SYSDIR_SYSTEM;
-		break;
-	case GIT_CONFIG_LEVEL_XDG:
-		val = GIT_SYSDIR_XDG;
-		break;
-	case GIT_CONFIG_LEVEL_GLOBAL:
-		val = GIT_SYSDIR_GLOBAL;
-		break;
-	case GIT_CONFIG_LEVEL_PROGRAMDATA:
-		val = GIT_SYSDIR_PROGRAMDATA;
-		break;
+	case GIT_CONFIG_LEVEL_SYSTEM: val = GIT_SYSDIR_SYSTEM; break;
+	case GIT_CONFIG_LEVEL_XDG:    val = GIT_SYSDIR_XDG; break;
+	case GIT_CONFIG_LEVEL_GLOBAL: val = GIT_SYSDIR_GLOBAL; break;
 	default:
 		giterr_set(
 			GITERR_INVALID, "Invalid config path selector %d", config_level);
 	}
 
 	return val;
-}
-
-extern char *git__user_agent;
-
-const char *git_libgit2__user_agent()
-{
-	return git__user_agent;
 }
 
 int git_libgit2_opts(int key, ...)
@@ -158,7 +138,7 @@ int git_libgit2_opts(int key, ...)
 		break;
 
 	case GIT_OPT_SET_SSL_CERT_LOCATIONS:
-#ifdef GIT_OPENSSL
+#ifdef GIT_SSL
 		{
 			const char *file = va_arg(ap, const char *);
 			const char *path = va_arg(ap, const char *);
@@ -173,23 +153,6 @@ int git_libgit2_opts(int key, ...)
 		error = -1;
 #endif
 		break;
-	case GIT_OPT_SET_USER_AGENT:
-		git__free(git__user_agent);
-		git__user_agent = git__strdup(va_arg(ap, const char *));
-		if (!git__user_agent) {
-			giterr_set_oom();
-			error = -1;
-		}
-
-		break;
-
-	case GIT_OPT_ENABLE_STRICT_OBJECT_CREATION:
-		git_object__strict_input_validation = (va_arg(ap, int) != 0);
-		break;
-
-	default:
-		giterr_set(GITERR_INVALID, "invalid option key");
-		error = -1;
 	}
 
 	va_end(ap);

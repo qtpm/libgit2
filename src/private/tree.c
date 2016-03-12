@@ -17,10 +17,7 @@
 #define DEFAULT_TREE_SIZE 16
 #define MAX_FILEMODE_BYTES 6
 
-#define TREE_ENTRY_CHECK_NAMELEN(n) \
-	if (n > UINT16_MAX) { giterr_set(GITERR_INVALID, "tree entry path too long"); }
-
-GIT__USE_STRMAP
+GIT__USE_STRMAP;
 
 static bool valid_filemode(const int filemode)
 {
@@ -84,58 +81,26 @@ int git_tree_entry_icmp(const git_tree_entry *e1, const git_tree_entry *e2)
 		git__strncasecmp);
 }
 
-/**
- * Allocate either from the pool or from the system allocator
- */
-static git_tree_entry *alloc_entry_base(git_pool *pool, const char *filename, size_t filename_len)
+static git_tree_entry *alloc_entry(const char *filename)
 {
 	git_tree_entry *entry = NULL;
-	size_t tree_len;
+	size_t filename_len = strlen(filename);
 
-	TREE_ENTRY_CHECK_NAMELEN(filename_len);
-
-	if (GIT_ADD_SIZET_OVERFLOW(&tree_len, sizeof(git_tree_entry), filename_len) ||
-	    GIT_ADD_SIZET_OVERFLOW(&tree_len, tree_len, 1))
-		return NULL;
-
-	entry = pool ? git_pool_malloc(pool, tree_len) :
-		       git__malloc(tree_len);
+	entry = git__malloc(sizeof(git_tree_entry) + filename_len + 1);
 	if (!entry)
 		return NULL;
 
 	memset(entry, 0x0, sizeof(git_tree_entry));
 	memcpy(entry->filename, filename, filename_len);
 	entry->filename[filename_len] = 0;
-	entry->filename_len = (uint16_t)filename_len;
+	entry->filename_len = filename_len;
 
 	return entry;
-}
-
-/**
- * Allocate a tree entry, using the poolin the tree which owns
- * it. This is useful when reading trees, so we don't allocate a ton
- * of small strings but can use the pool.
- */
-static git_tree_entry *alloc_entry_pooled(git_pool *pool, const char *filename, size_t filename_len)
-{
-	git_tree_entry *entry = NULL;
-
-	if (!(entry = alloc_entry_base(pool, filename, filename_len)))
-		return NULL;
-
-	entry->pooled = true;
-
-	return entry;
-}
-
-static git_tree_entry *alloc_entry(const char *filename)
-{
-	return alloc_entry_base(NULL, filename, strlen(filename));
 }
 
 struct tree_key_search {
 	const char *filename;
-	uint16_t filename_len;
+	size_t filename_len;
 };
 
 static int homing_search_cmp(const void *key, const void *array_member)
@@ -143,8 +108,8 @@ static int homing_search_cmp(const void *key, const void *array_member)
 	const struct tree_key_search *ksearch = key;
 	const git_tree_entry *entry = array_member;
 
-	const uint16_t len1 = ksearch->filename_len;
-	const uint16_t len2 = entry->filename_len;
+	const size_t len1 = ksearch->filename_len;
+	const size_t len2 = entry->filename_len;
 
 	return memcmp(
 		ksearch->filename,
@@ -180,10 +145,8 @@ static int tree_key_search(
 	const git_tree_entry *entry;
 	size_t homing, i;
 
-	TREE_ENTRY_CHECK_NAMELEN(filename_len);
-
 	ksearch.filename = filename;
-	ksearch.filename_len = (uint16_t)filename_len;
+	ksearch.filename_len = filename_len;
 
 	/* Initial homing search; find an entry on the tree with
 	 * the same prefix as the filename we're looking for */
@@ -234,7 +197,7 @@ static int tree_key_search(
 
 void git_tree_entry_free(git_tree_entry *entry)
 {
-	if (entry == NULL || entry->pooled)
+	if (entry == NULL)
 		return;
 
 	git__free(entry);
@@ -247,15 +210,12 @@ int git_tree_entry_dup(git_tree_entry **dest, const git_tree_entry *source)
 
 	assert(source);
 
-	GITERR_CHECK_ALLOC_ADD(&total_size, sizeof(git_tree_entry), source->filename_len);
-	GITERR_CHECK_ALLOC_ADD(&total_size, total_size, 1);
+	total_size = sizeof(git_tree_entry) + source->filename_len + 1;
 
 	copy = git__malloc(total_size);
 	GITERR_CHECK_ALLOC(copy);
 
 	memcpy(copy, source, total_size);
-
-	copy->pooled = 0;
 
 	*dest = copy;
 	return 0;
@@ -271,7 +231,6 @@ void git_tree__free(void *_tree)
 		git_tree_entry_free(e);
 
 	git_vector_free(&tree->entries);
-	git_pool_clear(&tree->pool);
 	git__free(tree);
 }
 
@@ -336,7 +295,6 @@ const git_tree_entry *git_tree_entry_byname(
 	const git_tree *tree, const char *filename)
 {
 	assert(tree && filename);
-
 	return entry_fromname(tree, filename, strlen(filename));
 }
 
@@ -367,16 +325,13 @@ int git_tree__prefix_position(const git_tree *tree, const char *path)
 {
 	const git_vector *entries = &tree->entries;
 	struct tree_key_search ksearch;
-	size_t at_pos, path_len;
+	size_t at_pos;
 
 	if (!path)
 		return 0;
 
-	path_len = strlen(path);
-	TREE_ENTRY_CHECK_NAMELEN(path_len);
-
 	ksearch.filename = path;
-	ksearch.filename_len = (uint16_t)path_len;
+	ksearch.filename_len = strlen(path);
 
 	/* be safe when we cast away constness - i.e. don't trigger a sort */
 	assert(git_vector_is_sorted(&tree->entries));
@@ -422,68 +377,51 @@ static int tree_error(const char *str, const char *path)
 	return -1;
 }
 
-static int parse_mode(unsigned int *modep, const char *buffer, const char **buffer_out)
-{
-	unsigned char c;
-	unsigned int mode = 0;
-
-	if (*buffer == ' ')
-		return -1;
-
-	while ((c = *buffer++) != ' ') {
-		if (c < '0' || c > '7')
-			return -1;
-		mode = (mode << 3) + (c - '0');
-	}
-	*modep = mode;
-	*buffer_out = buffer;
-
-	return 0;
-}
-
 int git_tree__parse(void *_tree, git_odb_object *odb_obj)
 {
 	git_tree *tree = _tree;
 	const char *buffer = git_odb_object_data(odb_obj);
 	const char *buffer_end = buffer + git_odb_object_size(odb_obj);
 
-	git_pool_init(&tree->pool, 1);
 	if (git_vector_init(&tree->entries, DEFAULT_TREE_SIZE, entry_sort_cmp) < 0)
 		return -1;
 
 	while (buffer < buffer_end) {
 		git_tree_entry *entry;
-		size_t filename_len;
-		const char *nul;
-		unsigned int attr;
+		int attr;
 
-		if (parse_mode(&attr, buffer, &buffer) < 0 || !buffer)
+		if (git__strtol32(&attr, buffer, &buffer, 8) < 0 || !buffer)
 			return tree_error("Failed to parse tree. Can't parse filemode", NULL);
 
-		if ((nul = memchr(buffer, 0, buffer_end - buffer)) == NULL)
+		if (*buffer++ != ' ')
 			return tree_error("Failed to parse tree. Object is corrupted", NULL);
 
-		filename_len = nul - buffer;
+		if (memchr(buffer, 0, buffer_end - buffer) == NULL)
+			return tree_error("Failed to parse tree. Object is corrupted", NULL);
+
 		/** Allocate the entry and store it in the entries vector */
 		{
-			entry = alloc_entry_pooled(&tree->pool, buffer, filename_len);
+			entry = alloc_entry(buffer);
 			GITERR_CHECK_ALLOC(entry);
 
-			if (git_vector_insert(&tree->entries, entry) < 0)
+			if (git_vector_insert(&tree->entries, entry) < 0) {
+				git__free(entry);
 				return -1;
+			}
 
 			entry->attr = attr;
 		}
 
-		/* Advance to the ID just after the path */
-		buffer += filename_len + 1;
+		while (buffer < buffer_end && *buffer != 0)
+			buffer++;
+
+		buffer++;
 
 		git_oid_fromraw(&entry->oid, (const unsigned char *)buffer);
 		buffer += GIT_OID_RAWSZ;
 	}
 
-	/* The tree is sorted by definition. Bad inputs give bad outputs */
-	tree->entries.flags |= GIT_VECTOR_SORTED;
+	git_vector_sort(&tree->entries);
 
 	return 0;
 }
@@ -726,18 +664,6 @@ on_error:
 	return -1;
 }
 
-static git_otype otype_from_mode(git_filemode_t filemode)
-{
-	switch (filemode) {
-	case GIT_FILEMODE_TREE:
-		return GIT_OBJ_TREE;
-	case GIT_FILEMODE_COMMIT:
-		return GIT_OBJ_COMMIT;
-	default:
-		return GIT_OBJ_BLOB;
-	}
-}
-
 int git_treebuilder_insert(
 	const git_tree_entry **entry_out,
 	git_treebuilder *bld,
@@ -756,10 +682,6 @@ int git_treebuilder_insert(
 
 	if (!valid_entry_name(bld->repo, filename))
 		return tree_error("Failed to insert entry. Invalid name for a tree entry", filename);
-
-	if (filemode != GIT_FILEMODE_COMMIT &&
-	    !git_object__is_valid(bld->repo, id, otype_from_mode(filemode)))
-		return tree_error("Failed to insert entry; invalid object specified", filename);
 
 	pos = git_strmap_lookup_index(bld->map, filename);
 	if (git_strmap_valid_index(bld->map, pos)) {
@@ -934,7 +856,7 @@ int git_tree_entry_bypath(
 
 	if (entry == NULL) {
 		giterr_set(GITERR_TREE,
-			   "the path '%.*s' does not exist in the given tree", filename_len, path);
+			"The path '%s' does not exist in the given tree", path);
 		return GIT_ENOTFOUND;
 	}
 
@@ -944,7 +866,7 @@ int git_tree_entry_bypath(
 		 * then this entry *must* be a tree */
 		if (!git_tree_entry__is_tree(entry)) {
 			giterr_set(GITERR_TREE,
-				   "the path '%.*s' exists but is not a tree", filename_len, path);
+				"The path '%s' does not exist in the given tree", path);
 			return GIT_ENOTFOUND;
 		}
 

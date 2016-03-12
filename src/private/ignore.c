@@ -11,41 +11,6 @@
 #define GIT_IGNORE_DEFAULT_RULES ".\n..\n.git\n"
 
 /**
- * A negative ignore pattern can match a positive one without
- * wildcards if its pattern equals the tail of the positive
- * pattern. Thus
- *
- * foo/bar
- * !bar
- *
- * would result in foo/bar being unignored again.
- */
-static int does_negate_pattern(git_attr_fnmatch *rule, git_attr_fnmatch *neg)
-{
-	char *p;
-
-	if ((rule->flags & GIT_ATTR_FNMATCH_NEGATIVE) == 0
-		&& (neg->flags & GIT_ATTR_FNMATCH_NEGATIVE) != 0) {
-		/*
-		 * no chance of matching if rule is shorter than
-		 * the negated one
-		 */
-		if (rule->length < neg->length)
-			return false;
-
-		/*
-		 * shift pattern so its tail aligns with the
-		 * negated pattern
-		 */
-		p = rule->pattern + rule->length - neg->length;
-		if (strcmp(p, neg->pattern) == 0)
-			return true;
-	}
-
-	return false;
-}
-
-/**
  * A negative ignore can only unignore a file which is given explicitly before, thus
  *
  *    foo
@@ -66,8 +31,6 @@ static int does_negate_rule(int *out, git_vector *rules, git_attr_fnmatch *match
 	char *path;
 	git_buf buf = GIT_BUF_INIT;
 
-	*out = 0;
-
 	/* path of the file relative to the workdir, so we match the rules in subdirs */
 	if (match->containing_dir) {
 		git_buf_puts(&buf, match->containing_dir);
@@ -78,34 +41,27 @@ static int does_negate_rule(int *out, git_vector *rules, git_attr_fnmatch *match
 	path = git_buf_detach(&buf);
 
 	git_vector_foreach(rules, i, rule) {
-		if (!(rule->flags & GIT_ATTR_FNMATCH_HASWILD)) {
-			if (does_negate_pattern(rule, match)) {
-				error = 0;
-				*out = 1;
-				goto out;
-			}
-			else
-				continue;
-		}
+		/* no chance of matching w/o a wilcard */
+		if (!(rule->flags & GIT_ATTR_FNMATCH_HASWILD))
+			continue;
 
 	/*
-	 * When dealing with a directory, we add '/<star>' so
-	 * p_fnmatch() honours FNM_PATHNAME. Checking for LEADINGDIR
-	 * alone isn't enough as that's also set for nagations, so we
-	 * need to check that NEGATIVE is off.
+	 * If we're dealing with a directory (which we know via the
+	 * strchr() check) we want to use 'dirname/<star>' as the
+	 * pattern so p_fnmatch() honours FNM_PATHNAME
 	 */
 		git_buf_clear(&buf);
 		if (rule->containing_dir) {
 			git_buf_puts(&buf, rule->containing_dir);
 		}
-
-		error = git_buf_puts(&buf, rule->pattern);
-
-		if ((rule->flags & (GIT_ATTR_FNMATCH_LEADINGDIR | GIT_ATTR_FNMATCH_NEGATIVE)) == GIT_ATTR_FNMATCH_LEADINGDIR)
-			error = git_buf_PUTS(&buf, "/*");
+		if (!strchr(rule->pattern, '*'))
+			error = git_buf_printf(&buf, "%s/*", rule->pattern);
+		else
+			error = git_buf_puts(&buf, rule->pattern);
 
 		if (error < 0)
 			goto out;
+
 
 		if ((error = p_fnmatch(git_buf_cstr(&buf), path, FNM_PATHNAME)) < 0) {
 			giterr_set(GITERR_INVALID, "error matching pattern");
@@ -120,6 +76,7 @@ static int does_negate_rule(int *out, git_vector *rules, git_attr_fnmatch *match
 		}
 	}
 
+	*out = 0;
 	error = 0;
 
 out:
@@ -204,7 +161,7 @@ static int push_ignore_file(
 	git_attr_file *file = NULL;
 
 	error = git_attr_cache__get(
-		&file, ignores->repo, NULL, GIT_ATTR_FILE__FROM_FILE,
+		&file, ignores->repo, GIT_ATTR_FILE__FROM_FILE,
 		base, filename, parse_ignore_file);
 	if (error < 0)
 		return error;
@@ -232,7 +189,7 @@ static int get_internal_ignores(git_attr_file **out, git_repository *repo)
 		return error;
 
 	error = git_attr_cache__get(
-		out, repo, NULL, GIT_ATTR_FILE__IN_MEMORY, NULL, GIT_IGNORE_INTERNAL, NULL);
+		out, repo, GIT_ATTR_FILE__IN_MEMORY, NULL, GIT_IGNORE_INTERNAL, NULL);
 
 	/* if internal rules list is empty, insert default rules */
 	if (!error && !(*out)->rules.length)
@@ -391,7 +348,7 @@ static bool ignore_lookup_in_rules(
 }
 
 int git_ignore__lookup(
-	int *out, git_ignores *ignores, const char *pathname, git_dir_flag dir_flag)
+	int *out, git_ignores *ignores, const char *pathname)
 {
 	unsigned int i;
 	git_attr_file *file;
@@ -400,7 +357,7 @@ int git_ignore__lookup(
 	*out = GIT_IGNORE_NOTFOUND;
 
 	if (git_attr_path__init(
-		&path, pathname, git_repository_workdir(ignores->repo), dir_flag) < 0)
+		&path, pathname, git_repository_workdir(ignores->repo)) < 0)
 		return -1;
 
 	/* first process builtins - success means path was found */
@@ -473,7 +430,7 @@ int git_ignore_path_is_ignored(
 	memset(&path, 0, sizeof(path));
 	memset(&ignores, 0, sizeof(ignores));
 
-	if ((error = git_attr_path__init(&path, pathname, workdir, GIT_DIR_FLAG_UNKNOWN)) < 0 ||
+	if ((error = git_attr_path__init(&path, pathname, workdir)) < 0 ||
 		(error = git_ignore__for_path(repo, path.path, &ignores)) < 0)
 		goto cleanup;
 

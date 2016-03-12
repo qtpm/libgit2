@@ -44,11 +44,6 @@
 #define GIT_REBASE_APPLY_APPLYING_FILE GIT_REBASE_APPLY_DIR "applying"
 #define GIT_REFS_HEADS_MASTER_FILE GIT_REFS_HEADS_DIR "master"
 
-#define GIT_SEQUENCER_DIR "sequencer/"
-#define GIT_SEQUENCER_HEAD_FILE GIT_SEQUENCER_DIR "head"
-#define GIT_SEQUENCER_OPTIONS_FILE GIT_SEQUENCER_DIR "options"
-#define GIT_SEQUENCER_TODO_FILE GIT_SEQUENCER_DIR "todo"
-
 #define GIT_STASH_FILE "stash"
 #define GIT_REFS_STASH_FILE GIT_REFS_DIR GIT_STASH_FILE
 
@@ -74,12 +69,11 @@ struct git_reference {
 git_reference *git_reference__set_name(git_reference *ref, const char *name);
 
 int git_reference__normalize_name(git_buf *buf, const char *name, unsigned int flags);
-int git_reference__update_terminal(git_repository *repo, const char *ref_name, const git_oid *oid, const git_signature *sig, const char *log_message);
+int git_reference__update_terminal(git_repository *repo, const char *ref_name, const git_oid *oid, const git_signature *signature, const char *log_message);
 int git_reference__is_valid_name(const char *refname, unsigned int flags);
 int git_reference__is_branch(const char *ref_name);
 int git_reference__is_remote(const char *ref_name);
 int git_reference__is_tag(const char *ref_name);
-const char *git_reference__shorthand(const char *name);
 
 /**
  * Lookup a reference by name and try to resolve to an OID.
@@ -112,6 +106,7 @@ int git_reference__update_for_commit(
 	git_reference *ref,
 	const char *ref_name,
 	const git_oid *id,
+	const git_signature *committer,
 	const char *operation);
 
 #endif

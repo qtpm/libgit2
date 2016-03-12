@@ -10,7 +10,6 @@
 #include "fileops.h"
 #include "filebuf.h"
 #include "vector.h"
-#include "idxmap.h"
 #include "tree-cache.h"
 #include "git2/odb.h"
 #include "git2/index.h"
@@ -23,11 +22,10 @@ struct git_index {
 
 	char *index_file_path;
 	git_futils_filestamp stamp;
-	git_oid checksum;   /* checksum at the end of the file */
 
 	git_vector entries;
-	git_idxmap *entries_map;
 
+	git_mutex  lock;    /* lock held while entries is being changed */
 	git_vector deleted; /* deleted entries if readers > 0 */
 	git_atomic readers; /* number of active iterators */
 
@@ -64,45 +62,6 @@ extern int git_index_entry_icmp(const void *a, const void *b);
 extern int git_index_entry_srch(const void *a, const void *b);
 extern int git_index_entry_isrch(const void *a, const void *b);
 
-/* Index time handling functions */
-GIT_INLINE(bool) git_index_time_eq(const git_index_time *one, const git_index_time *two)
-{
-	if (one->seconds != two->seconds)
-		return false;
-
-#ifdef GIT_USE_NSEC
-	if (one->nanoseconds != two->nanoseconds)
-		return false;
-#endif
-
-	return true;
-}
-
-/*
- * Test if the given index time is newer than the given existing index entry.
- * If the timestamps are exactly equivalent, then the given index time is
- * considered "racily newer" than the existing index entry.
- */
-GIT_INLINE(bool) git_index_entry_newer_than_index(
-	const git_index_entry *entry, git_index *index)
-{
-	/* If we never read the index, we can't have this race either */
-	if (!index || index->stamp.mtime.tv_sec == 0)
-		return false;
-
-	/* If the timestamp is the same or newer than the index, it's racy */
-#if defined(GIT_USE_NSEC)
-	if ((int32_t)index->stamp.mtime.tv_sec < entry->mtime.seconds)
-		return true;
-	else if ((int32_t)index->stamp.mtime.tv_sec > entry->mtime.seconds)
-		return false;
-	else
-		return (uint32_t)index->stamp.mtime.tv_nsec <= entry->mtime.nanoseconds;
-#else
-	return ((int32_t)index->stamp.mtime.tv_sec) <= entry->mtime.seconds;
-#endif
-}
-
 /* Search index for `path`, returning GIT_ENOTFOUND if it does not exist
  * (but not setting an error message).
  *
@@ -111,8 +70,6 @@ GIT_INLINE(bool) git_index_entry_newer_than_index(
  */
 extern int git_index__find_pos(
 	size_t *at_pos, git_index *index, const char *path, size_t path_len, int stage);
-
-extern int git_index__fill(git_index *index, const git_vector *source_entries);
 
 extern void git_index__set_ignore_case(git_index *index, bool ignore_case);
 
@@ -123,7 +80,7 @@ GIT_INLINE(const git_futils_filestamp *) git_index__filestamp(git_index *index)
    return &index->stamp;
 }
 
-extern int git_index__changed_relative_to(git_index *index, const git_oid *checksum);
+extern int git_index__changed_relative_to(git_index *index, const git_futils_filestamp *fs);
 
 /* Copy the current entries vector *and* increment the index refcount.
  * Call `git_index__release_snapshot` when done.
@@ -136,36 +93,5 @@ extern int git_index_snapshot_find(
 	size_t *at_pos, git_vector *snap, git_vector_cmp entry_srch,
 	const char *path, size_t path_len, int stage);
 
-/* Replace an index with a new index */
-int git_index_read_index(git_index *index, const git_index *new_index);
-
-typedef struct {
-	git_index *index;
-	git_filebuf file;
-	unsigned int should_write:1;
-} git_indexwriter;
-
-#define GIT_INDEXWRITER_INIT { NULL, GIT_FILEBUF_INIT }
-
-/* Lock the index for eventual writing. */
-extern int git_indexwriter_init(git_indexwriter *writer, git_index *index);
-
-/* Lock the index for eventual writing by a repository operation: a merge,
- * revert, cherry-pick or a rebase.  Note that the given checkout strategy
- * will be updated for the operation's use so that checkout will not write
- * the index.
- */
-extern int git_indexwriter_init_for_operation(
-	git_indexwriter *writer,
-	git_repository *repo,
-	unsigned int *checkout_strategy);
-
-/* Write the index and unlock it. */
-extern int git_indexwriter_commit(git_indexwriter *writer);
-
-/* Cleanup an index writing session, unlocking the file (if it is still
- * locked and freeing any data structures.
- */
-extern void git_indexwriter_cleanup(git_indexwriter *writer);
 
 #endif

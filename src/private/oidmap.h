@@ -13,11 +13,10 @@
 #define kmalloc git__malloc
 #define kcalloc git__calloc
 #define krealloc git__realloc
-#define kreallocarray git__reallocarray
 #define kfree git__free
 #include "khash.h"
 
-__KHASH_TYPE(oid, const git_oid *, void *)
+__KHASH_TYPE(oid, const git_oid *, void *);
 typedef khash_t(oid) git_oidmap;
 
 GIT_INLINE(khint_t) git_oidmap_hash(const git_oid *oid)
@@ -48,7 +47,5 @@ GIT_INLINE(khint_t) git_oidmap_hash(const git_oid *oid)
 #define git_oidmap_foreach_value kh_foreach_value
 
 #define git_oidmap_size(h) kh_size(h)
-
-#define git_oidmap_clear(h) kh_clear(oid, h)
 
 #endif

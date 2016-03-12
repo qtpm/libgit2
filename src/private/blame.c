@@ -23,8 +23,8 @@ static int hunk_byfinalline_search_cmp(const void *key, const void *entry)
 	git_blame_hunk *hunk = (git_blame_hunk*)entry;
 
 	size_t lineno = *(size_t*)key;
-	size_t lines_in_hunk = hunk->lines_in_hunk;
-	size_t final_start_line_number = hunk->final_start_line_number;
+	size_t lines_in_hunk = (size_t)hunk->lines_in_hunk;
+	size_t final_start_line_number = (size_t)hunk->final_start_line_number;
 
 	if (lineno < final_start_line_number)
 		return -1;
@@ -44,7 +44,7 @@ static int hunk_cmp(const void *_a, const void *_b)
 
 static bool hunk_ends_at_or_before_line(git_blame_hunk *hunk, size_t line)
 {
-	return line >= (hunk->final_start_line_number + hunk->lines_in_hunk - 1);
+	return line >= (size_t)(hunk->final_start_line_number + hunk->lines_in_hunk - 1);
 }
 
 static bool hunk_starts_at_or_after_line(git_blame_hunk *hunk, size_t line)
@@ -53,9 +53,9 @@ static bool hunk_starts_at_or_after_line(git_blame_hunk *hunk, size_t line)
 }
 
 static git_blame_hunk* new_hunk(
-		size_t start,
-		size_t lines,
-		size_t orig_start,
+		uint16_t start,
+		uint16_t lines,
+		uint16_t orig_start,
 		const char *path)
 {
 	git_blame_hunk *hunk = git__calloc(1, sizeof(git_blame_hunk));
@@ -76,10 +76,6 @@ static git_blame_hunk* dup_hunk(git_blame_hunk *hunk)
 			hunk->lines_in_hunk,
 			hunk->orig_start_line_number,
 			hunk->orig_path);
-
-	if (!newhunk)
-		return NULL;
-
 	git_oid_cpy(&newhunk->orig_commit_id, &hunk->orig_commit_id);
 	git_oid_cpy(&newhunk->final_commit_id, &hunk->final_commit_id);
 	newhunk->boundary = hunk->boundary;
@@ -166,9 +162,9 @@ const git_blame_hunk *git_blame_get_hunk_byindex(git_blame *blame, uint32_t inde
 	return (git_blame_hunk*)git_vector_get(&blame->hunks, index);
 }
 
-const git_blame_hunk *git_blame_get_hunk_byline(git_blame *blame, size_t lineno)
+const git_blame_hunk *git_blame_get_hunk_byline(git_blame *blame, uint32_t lineno)
 {
-	size_t i, new_lineno = lineno;
+	size_t i, new_lineno = (size_t)lineno;
 	assert(blame);
 
 	if (!git_vector_bsearch2(&i, &blame->hunks, hunk_byfinalline_search_cmp, &new_lineno)) {
@@ -223,17 +219,13 @@ static git_blame_hunk *split_hunk_in_vector(
 	}
 
 	new_line_count = hunk->lines_in_hunk - rel_line;
-	nh = new_hunk(hunk->final_start_line_number + rel_line, new_line_count,
-			hunk->orig_start_line_number + rel_line, hunk->orig_path);
-
-	if (!nh)
-		return NULL;
-
+	nh = new_hunk((uint16_t)(hunk->final_start_line_number+rel_line), (uint16_t)new_line_count,
+			(uint16_t)(hunk->orig_start_line_number+rel_line), hunk->orig_path);
 	git_oid_cpy(&nh->final_commit_id, &hunk->final_commit_id);
 	git_oid_cpy(&nh->orig_commit_id, &hunk->orig_commit_id);
 
 	/* Adjust hunk that was split */
-	hunk->lines_in_hunk -= new_line_count;
+	hunk->lines_in_hunk -= (uint16_t)new_line_count;
 	git_vector_insert_sorted(vec, nh, NULL);
 	{
 		git_blame_hunk *ret = return_new ? nh : hunk;
@@ -278,10 +270,6 @@ static git_blame_hunk* hunk_from_entry(git_blame__entry *e)
 {
 	git_blame_hunk *h = new_hunk(
 			e->lno+1, e->num_lines, e->s_lno+1, e->suspect->path);
-
-	if (!h)
-		return NULL;
-
 	git_oid_cpy(&h->final_commit_id, git_commit_id(e->suspect->commit));
 	git_oid_cpy(&h->orig_commit_id, git_commit_id(e->suspect->commit));
 	git_signature_dup(&h->final_signature, git_commit_author(e->suspect->commit));
@@ -319,8 +307,6 @@ static int blame_internal(git_blame *blame)
 	blame->final_buf_size = git_blob_rawsize(blame->final_blob);
 
 	ent = git__calloc(1, sizeof(git_blame__entry));
-	GITERR_CHECK_ALLOC(ent);
-
 	ent->num_lines = index_blob_lines(blame);
 	ent->lno = blame->options.min_line - 1;
 	ent->num_lines = ent->num_lines - blame->options.min_line + 1;
@@ -331,14 +317,13 @@ static int blame_internal(git_blame *blame)
 
 	blame->ent = ent;
 
-	error = git_blame__like_git(blame, blame->options.flags);
+	git_blame__like_git(blame, blame->options.flags);
 
 cleanup:
 	for (ent = blame->ent; ent; ) {
 		git_blame__entry *e = ent->next;
-		git_blame_hunk *h = hunk_from_entry(ent);
 
-		git_vector_insert(&blame->hunks, h);
+		git_vector_insert(&blame->hunks, hunk_from_entry(ent));
 
 		git_blame__free_entry(ent);
 		ent = e;
@@ -407,14 +392,11 @@ static int buffer_hunk_cb(
 	if (!blame->current_hunk) {
 		/* Line added at the end of the file */
 		blame->current_hunk = new_hunk(wedge_line, 0, wedge_line, blame->path);
-		GITERR_CHECK_ALLOC(blame->current_hunk);
-
 		git_vector_insert(&blame->hunks, blame->current_hunk);
 	} else if (!hunk_starts_at_or_after_line(blame->current_hunk, wedge_line)){
 		/* If this hunk doesn't start between existing hunks, split a hunk up so it does */
 		blame->current_hunk = split_hunk_in_vector(&blame->hunks, blame->current_hunk,
 				wedge_line - blame->current_hunk->orig_start_line_number, true);
-		GITERR_CHECK_ALLOC(blame->current_hunk);
 	}
 
 	return 0;
@@ -442,9 +424,7 @@ static int buffer_line_cb(
 		} else {
 			/* Create a new buffer-blame hunk with this line */
 			shift_hunks_by(&blame->hunks, blame->current_diff_line, 1);
-			blame->current_hunk = new_hunk(blame->current_diff_line, 1, 0, blame->path);
-			GITERR_CHECK_ALLOC(blame->current_hunk);
-
+			blame->current_hunk = new_hunk((uint16_t)blame->current_diff_line, 1, 0, blame->path);
 			git_vector_insert_sorted(&blame->hunks, blame->current_hunk, NULL);
 		}
 		blame->current_diff_line++;
@@ -484,20 +464,16 @@ int git_blame_buffer(
 	assert(out && reference && buffer && buffer_len);
 
 	blame = git_blame__alloc(reference->repository, reference->options, reference->path);
-	GITERR_CHECK_ALLOC(blame);
 
 	/* Duplicate all of the hunk structures in the reference blame */
 	git_vector_foreach(&reference->hunks, i, hunk) {
-		git_blame_hunk *h = dup_hunk(hunk);
-		GITERR_CHECK_ALLOC(h);
-
-		git_vector_insert(&blame->hunks, h);
+		git_vector_insert(&blame->hunks, dup_hunk(hunk));
 	}
 
 	/* Diff to the reference blob */
 	git_diff_blob_to_buffer(reference->final_blob, blame->path,
-		buffer, buffer_len, blame->path, &diffopts,
-		NULL, NULL, buffer_hunk_cb, buffer_line_cb, blame);
+			buffer, buffer_len, blame->path,
+			&diffopts, NULL, buffer_hunk_cb, buffer_line_cb, blame);
 
 	*out = blame;
 	return 0;

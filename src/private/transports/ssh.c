@@ -15,14 +15,12 @@
 #include "smart.h"
 #include "cred.h"
 #include "socket_stream.h"
-#include "ssh.h"
 
 #ifdef GIT_SSH
 
 #define OWNING_SUBTRANSPORT(s) ((ssh_subtransport *)(s)->parent.subtransport)
 
-static const char *ssh_prefixes[] = { "ssh://", "ssh+git://", "git+ssh://" };
-
+static const char prefix_ssh[] = "ssh://";
 static const char cmd_uploadpack[] = "git-upload-pack";
 static const char cmd_receivepack[] = "git-receive-pack";
 
@@ -64,24 +62,15 @@ static int gen_proto(git_buf *request, const char *cmd, const char *url)
 {
 	char *repo;
 	int len;
-	size_t i;
 
-	for (i = 0; i < ARRAY_SIZE(ssh_prefixes); ++i) {
-		const char *p = ssh_prefixes[i];
-
-		if (!git__prefixcmp(url, p)) {
-			url = url + strlen(p);
-			repo = strchr(url, '/');
-			if (repo && repo[1] == '~')
-				++repo;
-
-			goto done;
-		}
+	if (!git__prefixcmp(url, prefix_ssh)) {
+		url = url + strlen(prefix_ssh);
+		repo = strchr(url, '/');
+	} else {
+		repo = strchr(url, ':');
+		if (repo) repo++;
 	}
-	repo = strchr(url, ':');
-	if (repo) repo++;
 
-done:
 	if (!repo) {
 		giterr_set(GITERR_NET, "Malformed git protocol URL");
 		return -1;
@@ -136,25 +125,9 @@ static int ssh_stream_read(
 		return -1;
 
 	if ((rc = libssh2_channel_read(s->channel, buffer, buf_size)) < LIBSSH2_ERROR_NONE) {
-		ssh_error(s->session, "SSH could not read data");
+		ssh_error(s->session, "SSH could not read data");;
 		return -1;
 	}
-
-	/*
-	 * If we can't get anything out of stdout, it's typically a
-	 * not-found error, so read from stderr and signal EOF on
-	 * stderr.
-	 */
-	if (rc == 0) {
-		if ((rc = libssh2_channel_read_stderr(s->channel, buffer, buf_size)) > 0) {
-			giterr_set(GITERR_SSH, "%*s", rc, buffer);
-			return GIT_EEOF;
-		} else if (rc < LIBSSH2_ERROR_NONE) {
-			ssh_error(s->session, "SSH could not read stderr");
-			return -1;
-		}
-	}
-
 
 	*bytes_read = rc;
 
@@ -193,12 +166,11 @@ static int ssh_stream_write(
 static void ssh_stream_free(git_smart_subtransport_stream *stream)
 {
 	ssh_stream *s = (ssh_stream *)stream;
-	ssh_subtransport *t;
+	ssh_subtransport *t = OWNING_SUBTRANSPORT(s);
+	int ret;
 
-	if (!stream)
-		return;
+	GIT_UNUSED(ret);
 
-	t = OWNING_SUBTRANSPORT(s);
 	t->current_stream = NULL;
 
 	if (s->channel) {
@@ -310,14 +282,8 @@ static int ssh_agent_auth(LIBSSH2_SESSION *session, git_cred_ssh_key *c) {
 		if (rc < 0)
 			goto shutdown;
 
-		/* rc is set to 1 whenever the ssh agent ran out of keys to check.
-		 * Set the error code to authentication failure rather than erroring
-		 * out with an untranslatable error code.
-		 */
-		if (rc == 1) {
-			rc = LIBSSH2_ERROR_AUTHENTICATION_FAILED;
+		if (rc == 1)
 			goto shutdown;
-		}
 
 		rc = libssh2_agent_userauth(agent, c->username, curr);
 
@@ -393,25 +359,6 @@ static int _git_ssh_authenticate_session(
 				session, c->username, c->prompt_callback);
 			break;
 		}
-#ifdef GIT_SSH_MEMORY_CREDENTIALS
-		case GIT_CREDTYPE_SSH_MEMORY: {
-			git_cred_ssh_key *c = (git_cred_ssh_key *)cred;
-
-			assert(c->username);
-			assert(c->privatekey);
-
-			rc = libssh2_userauth_publickey_frommemory(
-				session,
-				c->username,
-				strlen(c->username),
-				c->publickey,
-				c->publickey ? strlen(c->publickey) : 0,
-				c->privatekey,
-				strlen(c->privatekey),
-				c->passphrase);
-			break;
-		}
-#endif
 		default:
 			rc = LIBSSH2_ERROR_AUTHENTICATION_FAILED;
 		}
@@ -508,7 +455,6 @@ static int _git_ssh_setup_conn(
 	char *host=NULL, *port=NULL, *path=NULL, *user=NULL, *pass=NULL;
 	const char *default_port="22";
 	int auth_methods, error = 0;
-	size_t i;
 	ssh_stream *s;
 	git_cred *cred = NULL;
 	LIBSSH2_SESSION* session=NULL;
@@ -524,22 +470,16 @@ static int _git_ssh_setup_conn(
 	s->session = NULL;
 	s->channel = NULL;
 
-	for (i = 0; i < ARRAY_SIZE(ssh_prefixes); ++i) {
-		const char *p = ssh_prefixes[i];
-
-		if (!git__prefixcmp(url, p)) {
-			if ((error = gitno_extract_url_parts(&host, &port, &path, &user, &pass, url, default_port)) < 0)
-				goto done;
-
-			goto post_extract;
-		}
+	if (!git__prefixcmp(url, prefix_ssh)) {
+		if ((error = gitno_extract_url_parts(&host, &port, &path, &user, &pass, url, default_port)) < 0)
+			goto done;
+	} else {
+		if ((error = git_ssh_extract_url_parts(&host, &user, url)) < 0)
+			goto done;
+		port = git__strdup(default_port);
+		GITERR_CHECK_ALLOC(port);
 	}
-	if ((error = git_ssh_extract_url_parts(&host, &user, url)) < 0)
-		goto done;
-	port = git__strdup(default_port);
-	GITERR_CHECK_ALLOC(port);
 
-post_extract:
 	if ((error = git_socket_stream_new(&s->io, host, port)) < 0 ||
 	    (error = git_stream_connect(s->io)) < 0)
 		goto done;
@@ -548,10 +488,10 @@ post_extract:
 		goto done;
 
 	if (t->owner->certificate_check_cb != NULL) {
-		git_cert_hostkey cert = {{ 0 }}, *cert_ptr;
+		git_cert_hostkey cert = { 0 }, *cert_ptr;
 		const char *key;
 
-		cert.parent.cert_type = GIT_CERT_HOSTKEY_LIBSSH2;
+		cert.cert_type = GIT_CERT_HOSTKEY_LIBSSH2;
 
 		key = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
 		if (key != NULL) {
@@ -645,7 +585,8 @@ post_extract:
 
 done:
 	if (error < 0) {
-		ssh_stream_free(*stream);
+		if (*stream)
+			ssh_stream_free(*stream);
 
 		if (session)
 			libssh2_session_free(session);
@@ -777,10 +718,8 @@ static int list_auth_methods(int *out, LIBSSH2_SESSION *session, const char *use
 	list = libssh2_userauth_list(session, username, strlen(username));
 
 	/* either error, or the remote accepts NONE auth, which is bizarre, let's punt */
-	if (list == NULL && !libssh2_userauth_authenticated(session)) {
-		ssh_error(session, "Failed to retrieve list of SSH authentication methods");
+	if (list == NULL && !libssh2_userauth_authenticated(session))
 		return -1;
-	}
 
 	ptr = list;
 	while (ptr) {
@@ -790,9 +729,6 @@ static int list_auth_methods(int *out, LIBSSH2_SESSION *session, const char *use
 		if (!git__prefixcmp(ptr, SSH_AUTH_PUBLICKEY)) {
 			*out |= GIT_CREDTYPE_SSH_KEY;
 			*out |= GIT_CREDTYPE_SSH_CUSTOM;
-#ifdef GIT_SSH_MEMORY_CREDENTIALS
-			*out |= GIT_CREDTYPE_SSH_MEMORY;
-#endif
 			ptr += strlen(SSH_AUTH_PUBLICKEY);
 			continue;
 		}
@@ -818,14 +754,12 @@ static int list_auth_methods(int *out, LIBSSH2_SESSION *session, const char *use
 #endif
 
 int git_smart_subtransport_ssh(
-	git_smart_subtransport **out, git_transport *owner, void *param)
+	git_smart_subtransport **out, git_transport *owner)
 {
 #ifdef GIT_SSH
 	ssh_subtransport *t;
 
 	assert(out);
-
-	GIT_UNUSED(param);
 
 	t = git__calloc(sizeof(ssh_subtransport), 1);
 	GITERR_CHECK_ALLOC(t);
@@ -839,7 +773,6 @@ int git_smart_subtransport_ssh(
 	return 0;
 #else
 	GIT_UNUSED(owner);
-	GIT_UNUSED(param);
 
 	assert(out);
 	*out = NULL;
@@ -860,7 +793,6 @@ int git_transport_ssh_with_paths(git_transport **out, git_remote *owner, void *p
 	git_smart_subtransport_definition ssh_definition = {
 		git_smart_subtransport_ssh,
 		0, /* no RPC */
-		NULL,
 	};
 
 	if (paths->count != 2) {
@@ -890,20 +822,5 @@ int git_transport_ssh_with_paths(git_transport **out, git_remote *owner, void *p
 
 	giterr_set(GITERR_INVALID, "Cannot create SSH transport. Library was built without SSH support");
 	return -1;
-#endif
-}
-
-int git_transport_ssh_global_init(void)
-{
-#ifdef GIT_SSH
-
-	libssh2_init(0);
-	return 0;
-
-#else
-
-	/* Nothing to initialize */
-	return 0;
-
 #endif
 }

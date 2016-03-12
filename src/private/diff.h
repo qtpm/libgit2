@@ -28,6 +28,7 @@ enum {
 	GIT_DIFFCAPS_TRUST_MODE_BITS  = (1 << 2), /* use st_mode? */
 	GIT_DIFFCAPS_TRUST_CTIME      = (1 << 3), /* use st_ctime? */
 	GIT_DIFFCAPS_USE_DEV          = (1 << 4), /* use st_dev? */
+	GIT_DIFFCAPS_TRUST_NANOSECS   = (1 << 5), /* use stat time nanoseconds */
 };
 
 #define DIFF_FLAGS_KNOWN_BINARY (GIT_DIFF_FLAG_BINARY|GIT_DIFF_FLAG_NOT_BINARY)
@@ -63,7 +64,6 @@ struct git_diff {
 	git_iterator_type_t new_src;
 	uint32_t diffcaps;
 	git_diff_perfdata perf;
-	bool index_updated;
 
 	int (*strcomp)(const char *, const char *);
 	int (*strncomp)(const char *, const char *, size_t);
@@ -94,7 +94,7 @@ extern int git_diff_delta__format_file_header(
 extern int git_diff__oid_for_file(
 	git_oid *out, git_diff *, const char *, uint16_t, git_off_t);
 extern int git_diff__oid_for_entry(
-	git_oid *out, git_diff *, const git_index_entry *, uint16_t, const git_oid *update);
+	git_oid *out, git_diff *, const git_index_entry *, const git_oid *update);
 
 extern int git_diff__from_iterators(
 	git_diff **diff_ptr,
@@ -122,25 +122,6 @@ extern int git_diff_find_similar__calc_similarity(
 
 extern int git_diff__commit(
 	git_diff **diff, git_repository *repo, const git_commit *commit, const git_diff_options *opts);
-
-/* Merge two `git_diff`s according to the callback given by `cb`. */
-
-typedef git_diff_delta *(*git_diff__merge_cb)(
-	const git_diff_delta *left,
-	const git_diff_delta *right,
-	git_pool *pool);
-
-extern int git_diff__merge(
-	git_diff *onto, const git_diff *from, git_diff__merge_cb cb);
-
-extern git_diff_delta *git_diff__merge_like_cgit(
-	const git_diff_delta *a,
-	const git_diff_delta *b,
-	git_pool *pool);
-
-/* Duplicate a `git_diff_delta` out of the `git_pool` */
-extern git_diff_delta *git_diff__delta_dup(
-	const git_diff_delta *d, git_pool *pool);
 
 /*
  * Sometimes a git_diff_file will have a zero size; this attempts to

@@ -1,7 +1,7 @@
-name = "git2"
+name = "libgit2"
 author = "libgit2 authors"
 organization = ""
 license = "GNU General Public License (GPL) v2.0 with linking exception"
-version = [0, 24, 0]
+version = [0, 22, 1]
 extra_install_dirs = ["src/git2"]
 project_start_year = 2008

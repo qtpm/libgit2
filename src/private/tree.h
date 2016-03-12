@@ -12,20 +12,17 @@
 #include "odb.h"
 #include "vector.h"
 #include "strmap.h"
-#include "pool.h"
 
 struct git_tree_entry {
 	uint16_t attr;
-	uint16_t filename_len;
 	git_oid oid;
-	bool pooled;
-	char filename[GIT_FLEX_ARRAY];
+	size_t filename_len;
+	char filename[1];
 };
 
 struct git_tree {
 	git_object object;
 	git_vector entries;
-	git_pool pool;
 };
 
 struct git_treebuilder {

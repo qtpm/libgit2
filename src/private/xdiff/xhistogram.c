@@ -44,7 +44,6 @@
 #include "xinclude.h"
 #include "xtypes.h"
 #include "xdiff.h"
-#include "common.h"
 
 #define MAX_PTR	UINT_MAX
 #define MAX_CNT	UINT_MAX
@@ -259,7 +258,7 @@ static int fall_back_to_classic_diff(struct histindex *index,
 		int line1, int count1, int line2, int count2)
 {
 	xpparam_t xpp;
-	xpp.flags = index->xpp->flags & ~XDF_DIFF_ALGORITHM_MASK;
+	xpp.flags = index->xpp->flags & ~XDF_HISTOGRAM_DIFF;
 
 	return xdl_fall_back_diff(index->env, &xpp,
 				  line1, count1, line2, count2);
@@ -272,7 +271,7 @@ static int histogram_diff(
 {
 	struct histindex index;
 	struct region lcs;
-	size_t sz;
+	unsigned int sz;
 	int result = -1;
 
 	if (count1 <= 0 && count2 <= 0)
@@ -303,8 +302,7 @@ static int histogram_diff(
 
 	index.table_bits = xdl_hashbits(count1);
 	sz = index.records_size = 1 << index.table_bits;
-	GITERR_CHECK_ALLOC_MULTIPLY(&sz, sz, sizeof(struct record *));
-
+	sz *= sizeof(struct record *);
 	if (!(index.records = (struct record **) xdl_malloc(sz)))
 		goto cleanup;
 	memset(index.records, 0, sz);

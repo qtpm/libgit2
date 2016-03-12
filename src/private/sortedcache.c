@@ -1,6 +1,6 @@
 #include "sortedcache.h"
 
-GIT__USE_STRMAP
+GIT__USE_STRMAP;
 
 int git_sortedcache_new(
 	git_sortedcache **out,
@@ -11,18 +11,15 @@ int git_sortedcache_new(
 	const char *path)
 {
 	git_sortedcache *sc;
-	size_t pathlen, alloclen;
+	size_t pathlen;
 
 	pathlen = path ? strlen(path) : 0;
 
-	GITERR_CHECK_ALLOC_ADD(&alloclen, sizeof(git_sortedcache), pathlen);
-	GITERR_CHECK_ALLOC_ADD(&alloclen, alloclen, 1);
-	sc = git__calloc(1, alloclen);
+	sc = git__calloc(sizeof(git_sortedcache) + pathlen + 1, 1);
 	GITERR_CHECK_ALLOC(sc);
 
-	git_pool_init(&sc->pool, 1);
-
-	if (git_vector_init(&sc->items, 4, item_cmp) < 0 ||
+	if (git_pool_init(&sc->pool, 1, 0) < 0 ||
+		git_vector_init(&sc->items, 4, item_cmp) < 0 ||
 		git_strmap_alloc(&sc->map) < 0)
 		goto fail;
 

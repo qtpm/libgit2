@@ -21,7 +21,7 @@ GIT_INLINE(void) git_config_file_free(git_config_backend *cfg)
 }
 
 GIT_INLINE(int) git_config_file_get_string(
-	git_config_entry **out, git_config_backend *cfg, const char *name)
+	const git_config_entry **out, git_config_backend *cfg, const char *name)
 {
 	return cfg->get(cfg, name, out);
 }
@@ -53,16 +53,6 @@ GIT_INLINE(int) git_config_file_foreach_match(
 	void *data)
 {
 	return git_config_backend_foreach_match(cfg, regexp, fn, data);
-}
-
-GIT_INLINE(int) git_config_file_lock(git_config_backend *cfg)
-{
-	return cfg->lock(cfg);
-}
-
-GIT_INLINE(int) git_config_file_unlock(git_config_backend *cfg, int success)
-{
-	return cfg->unlock(cfg, success);
 }
 
 extern int git_config_file_normalize_section(char *start, char *end);

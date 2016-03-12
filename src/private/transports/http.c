@@ -10,14 +10,11 @@
 #include "http_parser.h"
 #include "buffer.h"
 #include "netops.h"
-#include "global.h"
-#include "remote.h"
 #include "smart.h"
 #include "auth.h"
 #include "auth_negotiate.h"
-#include "tls_stream.h"
+#include "openssl_stream.h"
 #include "socket_stream.h"
-#include "curl_stream.h"
 
 git_http_auth_scheme auth_schemes[] = {
 	{ GIT_AUTHTYPE_NEGOTIATE, "Negotiate", GIT_CREDTYPE_DEFAULT, git_http_auth_negotiate },
@@ -37,8 +34,6 @@ static const char *post_verb = "POST";
 
 #define PARSE_ERROR_GENERIC	-1
 #define PARSE_ERROR_REPLAY	-2
-/** Look at the user field */
-#define PARSE_ERROR_EXT         -3
 
 #define CHUNK_SIZE	4096
 
@@ -75,13 +70,12 @@ typedef struct {
 	gitno_buffer parse_buffer;
 	git_buf parse_header_name;
 	git_buf parse_header_value;
-	char parse_buffer_data[NETIO_BUFSIZE];
+	char parse_buffer_data[2048];
 	char *content_type;
 	char *location;
 	git_vector www_authenticate;
 	enum last_cb last_cb;
 	int parse_error;
-	int error;
 	unsigned parse_finished : 1;
 
 	/* Authentication */
@@ -187,16 +181,6 @@ static int apply_credentials(git_buf *buf, http_subtransport *t)
 	return context->next_token(buf, context, cred);
 }
 
-static const char *user_agent(void)
-{
-	const char *custom = git_libgit2__user_agent();
-
-	if (custom)
-		return custom;
-
-	return "libgit2 " LIBGIT2_VERSION;
-}
-
 static int gen_request(
 	git_buf *buf,
 	http_stream *s,
@@ -204,11 +188,10 @@ static int gen_request(
 {
 	http_subtransport *t = OWNING_SUBTRANSPORT(s);
 	const char *path = t->connection_data.path ? t->connection_data.path : "/";
-	size_t i;
 
 	git_buf_printf(buf, "%s %s%s HTTP/1.1\r\n", s->verb, path, s->service_url);
 
-	git_buf_printf(buf, "User-Agent: git/1.0 (%s)\r\n", user_agent());
+	git_buf_puts(buf, "User-Agent: git/1.0 (libgit2 " LIBGIT2_VERSION ")\r\n");
 	git_buf_printf(buf, "Host: %s\r\n", t->connection_data.host);
 
 	if (s->chunked || content_length > 0) {
@@ -221,11 +204,6 @@ static int gen_request(
 			git_buf_printf(buf, "Content-Length: %"PRIuZ "\r\n", content_length);
 	} else
 		git_buf_puts(buf, "Accept: */*\r\n");
-
-	for (i = 0; i < t->owner->custom_headers.count; i++) {
-		if (t->owner->custom_headers.strings[i])
-			git_buf_printf(buf, "%s\r\n", t->owner->custom_headers.strings[i]);
-	}
 
 	/* Apply credentials to the request */
 	if (apply_credentials(buf, t) < 0)
@@ -275,7 +253,7 @@ static int on_header_ready(http_subtransport *t)
 			GITERR_CHECK_ALLOC(t->content_type);
 		}
 	}
-	else if (!strcasecmp("WWW-Authenticate", git_buf_cstr(name))) {
+	else if (!strcmp("WWW-Authenticate", git_buf_cstr(name))) {
 		char *dup = git__strdup(git_buf_cstr(value));
 		GITERR_CHECK_ALLOC(dup);
 
@@ -356,11 +334,8 @@ static int on_headers_complete(http_parser *parser)
 		if (!t->owner->cred_acquire_cb) {
 			no_callback = 1;
 		} else {
-			if (allowed_auth_types) {
-				if (t->cred) {
-					t->cred->free(t->cred);
-					t->cred = NULL;
-				}
+			if (allowed_auth_types &&
+			    (!t->cred || 0 == (t->cred->credtype & allowed_auth_types))) {
 
 				error = t->owner->cred_acquire_cb(&t->cred,
 								  t->owner->url,
@@ -371,15 +346,9 @@ static int on_headers_complete(http_parser *parser)
 				if (error == GIT_PASSTHROUGH) {
 					no_callback = 1;
 				} else if (error < 0) {
-					t->error = error;
-					return t->parse_error = PARSE_ERROR_EXT;
+					return PARSE_ERROR_GENERIC;
 				} else {
 					assert(t->cred);
-
-					if (!(t->cred->credtype & allowed_auth_types)) {
-						giterr_set(GITERR_NET, "credentials callback returned an invalid cred type");
-						return t->parse_error = PARSE_ERROR_GENERIC;
-					}
 
 					/* Successfully acquired a credential. */
 					t->parse_error = PARSE_ERROR_REPLAY;
@@ -532,7 +501,7 @@ static int write_chunk(git_stream *io, const char *buffer, size_t len)
 	git_buf buf = GIT_BUF_INIT;
 
 	/* Chunk header */
-	git_buf_printf(&buf, "%" PRIxZ "\r\n", len);
+	git_buf_printf(&buf, "%X\r\n", (unsigned)len);
 
 	if (git_buf_oom(&buf))
 		return -1;
@@ -558,7 +527,6 @@ static int write_chunk(git_stream *io, const char *buffer, size_t len)
 static int http_connect(http_subtransport *t)
 {
 	int error;
-	char *proxy_url;
 
 	if (t->connected &&
 		http_should_keep_alive(&t->parser) &&
@@ -572,13 +540,9 @@ static int http_connect(http_subtransport *t)
 	}
 
 	if (t->connection_data.use_ssl) {
-		error = git_tls_stream_new(&t->io, t->connection_data.host, t->connection_data.port);
+		error = git_openssl_stream_new(&t->io, t->connection_data.host, t->connection_data.port);
 	} else {
-#ifdef GIT_CURL
-		error = git_curl_stream_new(&t->io, t->connection_data.host, t->connection_data.port);
-#else
 		error = git_socket_stream_new(&t->io,  t->connection_data.host, t->connection_data.port);
-#endif
 	}
 
 	if (error < 0)
@@ -586,20 +550,10 @@ static int http_connect(http_subtransport *t)
 
 	GITERR_CHECK_VERSION(t->io, GIT_STREAM_VERSION, "git_stream");
 
-	if (git_stream_supports_proxy(t->io) &&
-	    !git_remote__get_http_proxy(t->owner->owner, !!t->connection_data.use_ssl, &proxy_url)) {
-		error = git_stream_set_proxy(t->io, proxy_url);
-		git__free(proxy_url);
-
-		if (error < 0)
-			return error;
-	}
-
 	error = git_stream_connect(t->io);
 
-#if defined(GIT_OPENSSL) || defined(GIT_SECURE_TRANSPORT) || defined(GIT_CURL)
-	if ((!error || error == GIT_ECERTIFICATE) && t->owner->certificate_check_cb != NULL &&
-	    git_stream_is_encrypted(t->io)) {
+#ifdef GIT_SSL
+	if ((!error || error == GIT_ECERTIFICATE) && t->owner->certificate_check_cb != NULL) {
 		git_cert *cert;
 		int is_valid;
 
@@ -731,10 +685,6 @@ replay:
 				return error;
 
 			goto replay;
-		}
-
-		if (t->parse_error == PARSE_ERROR_EXT) {
-			return t->error;
 		}
 
 		if (t->parse_error < 0)
@@ -1052,11 +1002,9 @@ static void http_free(git_smart_subtransport *subtransport)
 	git__free(t);
 }
 
-int git_smart_subtransport_http(git_smart_subtransport **out, git_transport *owner, void *param)
+int git_smart_subtransport_http(git_smart_subtransport **out, git_transport *owner)
 {
 	http_subtransport *t;
-
-	GIT_UNUSED(param);
 
 	if (!out)
 		return -1;

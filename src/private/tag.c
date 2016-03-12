@@ -72,7 +72,7 @@ static int tag_parse(git_tag *tag, const char *buffer, const char *buffer_end)
 	};
 
 	unsigned int i;
-	size_t text_len, alloc_len;
+	size_t text_len;
 	char *search;
 
 	if (git_oid__parse(&tag->target, &buffer, buffer_end, "object ") < 0)
@@ -117,8 +117,7 @@ static int tag_parse(git_tag *tag, const char *buffer, const char *buffer_end)
 
 	text_len = search - buffer;
 
-	GITERR_CHECK_ALLOC_ADD(&alloc_len, text_len, 1);
-	tag->tag_name = git__malloc(alloc_len);
+	tag->tag_name = git__malloc(text_len + 1);
 	GITERR_CHECK_ALLOC(tag->tag_name);
 
 	memcpy(tag->tag_name, buffer, text_len);
@@ -142,8 +141,7 @@ static int tag_parse(git_tag *tag, const char *buffer, const char *buffer_end)
 
 		text_len = buffer_end - ++buffer;
 
-		GITERR_CHECK_ALLOC_ADD(&alloc_len, text_len, 1);
-		tag->message = git__malloc(alloc_len);
+		tag->message = git__malloc(text_len + 1);
 		GITERR_CHECK_ALLOC(tag->message);
 
 		memcpy(tag->message, buffer, text_len);
@@ -273,7 +271,7 @@ static int git_tag_create__internal(
 	} else
 		git_oid_cpy(oid, git_object_id(target));
 
-	error = git_reference_create(&new_ref, repo, ref_name.ptr, oid, allow_ref_overwrite, NULL);
+	error = git_reference_create(&new_ref, repo, ref_name.ptr, oid, allow_ref_overwrite, NULL, NULL);
 
 cleanup:
 	git_reference_free(new_ref);
@@ -358,7 +356,7 @@ int git_tag_create_frombuffer(git_oid *oid, git_repository *repo, const char *bu
 	git_odb_object_free(target_obj);
 
 	/** Ensure the tag name doesn't conflict with an already existing
-	 *	reference unless overwriting has explicitly been requested **/
+	 *	reference unless overwriting has explictly been requested **/
 	if (error == 0 && !allow_ref_overwrite) {
 		giterr_set(GITERR_TAG, "Tag already exists");
 		return GIT_EEXISTS;
@@ -380,7 +378,7 @@ int git_tag_create_frombuffer(git_oid *oid, git_repository *repo, const char *bu
 	}
 
 	error = git_reference_create(
-		&new_ref, repo, ref_name.ptr, oid, allow_ref_overwrite, NULL);
+		&new_ref, repo, ref_name.ptr, oid, allow_ref_overwrite, NULL, NULL);
 
 	git_reference_free(new_ref);
 	git_buf_free(&ref_name);

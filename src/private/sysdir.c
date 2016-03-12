@@ -15,16 +15,6 @@
 #include "win32/findfile.h"
 #endif
 
-static int git_sysdir_guess_programdata_dirs(git_buf *out)
-{
-#ifdef GIT_WIN32
-	return git_win32__find_programdata_dirs(out);
-#else
-	git_buf_clear(out);
-	return 0;
-#endif
-}
-
 static int git_sysdir_guess_system_dirs(git_buf *out)
 {
 #ifdef GIT_WIN32
@@ -39,14 +29,7 @@ static int git_sysdir_guess_global_dirs(git_buf *out)
 #ifdef GIT_WIN32
 	return git_win32__find_global_dirs(out);
 #else
-	int error = git__getenv(out, "HOME");
-
-	if (error == GIT_ENOTFOUND) {
-		giterr_clear();
-		error = 0;
-	}
-
-	return error;
+	return git_buf_sets(out, getenv("HOME"));
 #endif
 }
 
@@ -55,22 +38,15 @@ static int git_sysdir_guess_xdg_dirs(git_buf *out)
 #ifdef GIT_WIN32
 	return git_win32__find_xdg_dirs(out);
 #else
-	git_buf env = GIT_BUF_INIT;
-	int error;
+	const char *env = NULL;
 
-	if ((error = git__getenv(&env, "XDG_CONFIG_HOME")) == 0)
-		error = git_buf_joinpath(out, env.ptr, "git");
+	if ((env = getenv("XDG_CONFIG_HOME")) != NULL)
+		return git_buf_joinpath(out, env, "git");
+	else if ((env = getenv("HOME")) != NULL)
+		return git_buf_joinpath(out, env, ".config/git");
 
-	if (error == GIT_ENOTFOUND && (error = git__getenv(&env, "HOME")) == 0)
-		error = git_buf_joinpath(out, env.ptr, ".config/git");
-
-	if (error == GIT_ENOTFOUND) {
-		giterr_clear();
-		error = 0;
-	}
-
-	git_buf_free(&env);
-	return error;
+	git_buf_clear(out);
+	return 0;
 #endif
 }
 
@@ -86,13 +62,12 @@ static int git_sysdir_guess_template_dirs(git_buf *out)
 typedef int (*git_sysdir_guess_cb)(git_buf *out);
 
 static git_buf git_sysdir__dirs[GIT_SYSDIR__MAX] =
-	{ GIT_BUF_INIT, GIT_BUF_INIT, GIT_BUF_INIT, GIT_BUF_INIT, GIT_BUF_INIT };
+	{ GIT_BUF_INIT, GIT_BUF_INIT, GIT_BUF_INIT, GIT_BUF_INIT };
 
 static git_sysdir_guess_cb git_sysdir__dir_guess[GIT_SYSDIR__MAX] = {
 	git_sysdir_guess_system_dirs,
 	git_sysdir_guess_global_dirs,
 	git_sysdir_guess_xdg_dirs,
-	git_sysdir_guess_programdata_dirs,
 	git_sysdir_guess_template_dirs,
 };
 
@@ -267,12 +242,6 @@ int git_sysdir_find_xdg_file(git_buf *path, const char *filename)
 {
 	return git_sysdir_find_in_dirlist(
 		path, filename, GIT_SYSDIR_XDG, "global/xdg");
-}
-
-int git_sysdir_find_programdata_file(git_buf *path, const char *filename)
-{
-	return git_sysdir_find_in_dirlist(
-		path, filename, GIT_SYSDIR_PROGRAMDATA, "ProgramData");
 }
 
 int git_sysdir_find_template_dir(git_buf *path)

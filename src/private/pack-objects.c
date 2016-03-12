@@ -15,8 +15,6 @@
 #include "thread-utils.h"
 #include "tree.h"
 #include "util.h"
-#include "revwalk.h"
-#include "commit_list.h"
 
 #include "git2/pack.h"
 #include "git2/commit.h"
@@ -40,8 +38,6 @@ struct pack_write_context {
 	git_indexer *indexer;
 	git_transfer_progress *stats;
 };
-
-GIT__USE_OIDMAP
 
 #ifdef GIT_THREADS
 
@@ -91,7 +87,7 @@ static unsigned name_hash(const char *name)
 static int packbuilder_config(git_packbuilder *pb)
 {
 	git_config *config;
-	int ret = 0;
+	int ret;
 	int64_t val;
 
 	if ((ret = git_repository_config_snapshot(&config, pb->repo)) < 0)
@@ -100,10 +96,8 @@ static int packbuilder_config(git_packbuilder *pb)
 #define config_get(KEY,DST,DFLT) do { \
 	ret = git_config_get_int64(&val, config, KEY); \
 	if (!ret) (DST) = val; \
-	else if (ret == GIT_ENOTFOUND) { \
-	    (DST) = (DFLT); \
-	    ret = 0; \
-	} else if (ret < 0) goto out; } while (0)
+	else if (ret == GIT_ENOTFOUND) (DST) = (DFLT); \
+	else if (ret < 0) return -1; } while (0)
 
 	config_get("pack.deltaCacheSize", pb->max_delta_cache_size,
 		   GIT_PACK_DELTA_CACHE_SIZE);
@@ -115,10 +109,9 @@ static int packbuilder_config(git_packbuilder *pb)
 
 #undef config_get
 
-out:
 	git_config_free(config);
 
-	return ret;
+	return 0;
 }
 
 int git_packbuilder_new(git_packbuilder **out, git_repository *repo)
@@ -131,14 +124,9 @@ int git_packbuilder_new(git_packbuilder **out, git_repository *repo)
 	GITERR_CHECK_ALLOC(pb);
 
 	pb->object_ix = git_oidmap_alloc();
+
 	if (!pb->object_ix)
 		goto on_error;
-
-	pb->walk_objects = git_oidmap_alloc();
-	if (!pb->walk_objects)
-		goto on_error;
-
-	git_pool_init(&pb->object_pool, sizeof(git_walk_object));
 
 	pb->repo = repo;
 	pb->nr_threads = 1; /* do not spawn any thread by default */
@@ -202,7 +190,6 @@ int git_packbuilder_insert(git_packbuilder *pb, const git_oid *oid,
 {
 	git_pobject *po;
 	khiter_t pos;
-	size_t newsize;
 	int ret;
 
 	assert(pb && oid);
@@ -214,18 +201,9 @@ int git_packbuilder_insert(git_packbuilder *pb, const git_oid *oid,
 		return 0;
 
 	if (pb->nr_objects >= pb->nr_alloc) {
-		GITERR_CHECK_ALLOC_ADD(&newsize, pb->nr_alloc, 1024);
-		GITERR_CHECK_ALLOC_MULTIPLY(&newsize, newsize, 3 / 2);
-
-		if (!git__is_uint32(newsize)) {
-			giterr_set(GITERR_NOMEMORY, "Packfile too large to fit in memory.");
-			return -1;
-		}
-
-		pb->nr_alloc = (uint32_t)newsize;
-
-		pb->object_list = git__reallocarray(pb->object_list,
-			pb->nr_alloc, sizeof(*po));
+		pb->nr_alloc = (pb->nr_alloc + 1024) * 3 / 2;
+		pb->object_list = git__realloc(pb->object_list,
+					       pb->nr_alloc * sizeof(*po));
 		GITERR_CHECK_ALLOC(pb->object_list);
 		rehash(pb);
 	}
@@ -521,10 +499,8 @@ static int cb_tag_foreach(const char *name, git_oid *oid, void *data)
 static git_pobject **compute_write_order(git_packbuilder *pb)
 {
 	unsigned int i, wo_end, last_untagged;
-	git_pobject **wo;
 
-	if ((wo = git__mallocarray(pb->nr_objects, sizeof(*wo))) == NULL)
-		return NULL;
+	git_pobject **wo = git__malloc(sizeof(*wo) * pb->nr_objects);
 
 	for (i = 0; i < pb->nr_objects; i++) {
 		git_pobject *po = pb->object_list + i;
@@ -608,7 +584,6 @@ static git_pobject **compute_write_order(git_packbuilder *pb)
 	}
 
 	if (wo_end != pb->nr_objects) {
-		git__free(wo);
 		giterr_set(GITERR_INVALID, "invalid write order");
 		return NULL;
 	}
@@ -629,8 +604,10 @@ static int write_pack(git_packbuilder *pb,
 	int error = 0;
 
 	write_order = compute_write_order(pb);
-	if (write_order == NULL)
-		return -1;
+	if (write_order == NULL) {
+		error = -1;
+		goto done;
+	}
 
 	/* Write pack header */
 	ph.hdr_signature = htonl(PACK_SIGNATURE);
@@ -793,13 +770,10 @@ static int try_delta(git_packbuilder *pb, struct unpacked *trg,
 		*mem_usage += sz;
 	}
 	if (!src->data) {
-		size_t obj_sz;
-
-		if (git_odb_read(&obj, pb->odb, &src_object->id) < 0 ||
-			!git__is_ulong(obj_sz = git_odb_object_size(obj)))
+		if (git_odb_read(&obj, pb->odb, &src_object->id) < 0)
 			return -1;
 
-		sz = (unsigned long)obj_sz;
+		sz = (unsigned long)git_odb_object_size(obj);
 		src->data = git__malloc(sz);
 		GITERR_CHECK_ALLOC(src->data);
 		memcpy(src->data, git_odb_object_data(obj), sz);
@@ -843,13 +817,8 @@ static int try_delta(git_packbuilder *pb, struct unpacked *trg,
 		trg_object->delta_data = NULL;
 	}
 	if (delta_cacheable(pb, src_size, trg_size, delta_size)) {
-		bool overflow = git__add_uint64_overflow(
-			&pb->delta_cache_size, pb->delta_cache_size, delta_size);
-
+		pb->delta_cache_size += delta_size;
 		git_packbuilder__cache_unlock(pb);
-
-		if (overflow)
-			return -1;
 
 		trg_object->delta_data = git__realloc(delta_buf, delta_size);
 		GITERR_CHECK_ALLOC(trg_object->delta_data);
@@ -896,29 +865,6 @@ static unsigned long free_unpacked(struct unpacked *n)
 	return freed_mem;
 }
 
-static int report_delta_progress(git_packbuilder *pb, uint32_t count, bool force)
-{
-	int ret;
-
-	if (pb->progress_cb) {
-		double current_time = git__timer();
-		double elapsed = current_time - pb->last_progress_report_time;
-
-		if (force || elapsed >= MIN_PROGRESS_UPDATE_INTERVAL) {
-			pb->last_progress_report_time = current_time;
-
-			ret = pb->progress_cb(
-				GIT_PACKBUILDER_DELTAFICATION,
-				count, pb->nr_objects, pb->progress_cb_payload);
-
-			if (ret)
-				return giterr_set_after_callback(ret);
-		}
-	}
-
-	return 0;
-}
-
 static int find_deltas(git_packbuilder *pb, git_pobject **list,
 		       unsigned int *list_size, unsigned int window,
 		       int depth)
@@ -943,9 +889,6 @@ static int find_deltas(git_packbuilder *pb, git_pobject **list,
 			git_packbuilder__progress_unlock(pb);
 			break;
 		}
-
-		pb->nr_deltified += 1;
-		report_delta_progress(pb, pb->nr_deltified, false);
 
 		po = *list++;
 		(*list_size)--;
@@ -1145,7 +1088,7 @@ static int ll_find_deltas(git_packbuilder *pb, git_pobject **list,
 		return 0;
 	}
 
-	p = git__mallocarray(pb->nr_threads, sizeof(*p));
+	p = git__malloc(pb->nr_threads * sizeof(*p));
 	GITERR_CHECK_ALLOC(p);
 
 	/* Partition the work among the threads */
@@ -1296,7 +1239,7 @@ static int prepare_pack(git_packbuilder *pb)
 	if (pb->progress_cb)
 			pb->progress_cb(GIT_PACKBUILDER_DELTAFICATION, 0, pb->nr_objects, pb->progress_cb_payload);
 
-	delta_list = git__mallocarray(pb->nr_objects, sizeof(*delta_list));
+	delta_list = git__malloc(pb->nr_objects * sizeof(*delta_list));
 	GITERR_CHECK_ALLOC(delta_list);
 
 	for (i = 0; i < pb->nr_objects; ++i) {
@@ -1318,8 +1261,6 @@ static int prepare_pack(git_packbuilder *pb)
 			return -1;
 		}
 	}
-
-	report_delta_progress(pb, pb->nr_objects, true);
 
 	pb->done = true;
 	git__free(delta_list);
@@ -1386,7 +1327,6 @@ const git_oid *git_packbuilder_hash(git_packbuilder *pb)
 	return &pb->pack_oid;
 }
 
-
 static int cb_tree_walk(
 	const char *root, const git_tree_entry *entry, void *payload)
 {
@@ -1435,42 +1375,6 @@ int git_packbuilder_insert_tree(git_packbuilder *pb, const git_oid *oid)
 	return error;
 }
 
-int git_packbuilder_insert_recur(git_packbuilder *pb, const git_oid *id, const char *name)
-{
-	git_object *obj;
-	int error;
-
-	assert(pb && id);
-
-	if ((error = git_object_lookup(&obj, pb->repo, id, GIT_OBJ_ANY)) < 0)
-		return error;
-
-	switch (git_object_type(obj)) {
-	case GIT_OBJ_BLOB:
-		error = git_packbuilder_insert(pb, id, name);
-		break;
-	case GIT_OBJ_TREE:
-		error = git_packbuilder_insert_tree(pb, id);
-		break;
-	case GIT_OBJ_COMMIT:
-		error = git_packbuilder_insert_commit(pb, id);
-		break;
-	case GIT_OBJ_TAG:
-		if ((error = git_packbuilder_insert(pb, id, name)) < 0)
-			goto cleanup;
-		error = git_packbuilder_insert_recur(pb, git_tag_target_id((git_tag *) obj), NULL);
-		break;
-
-	default:
-		giterr_set(GITERR_INVALID, "unknown object type");
-		error = -1;
-	}
-
-cleanup:
-	git_object_free(obj);
-	return error;
-}
-
 uint32_t git_packbuilder_object_count(git_packbuilder *pb)
 {
 	return pb->nr_objects;
@@ -1479,235 +1383,6 @@ uint32_t git_packbuilder_object_count(git_packbuilder *pb)
 uint32_t git_packbuilder_written(git_packbuilder *pb)
 {
 	return pb->nr_written;
-}
-
-int lookup_walk_object(git_walk_object **out, git_packbuilder *pb, const git_oid *id)
-{
-	git_walk_object *obj;
-
-	obj = git_pool_mallocz(&pb->object_pool, 1);
-	if (!obj) {
-		giterr_set_oom();
-		return -1;
-	}
-
-	git_oid_cpy(&obj->id, id);
-
-	*out = obj;
-	return 0;
-}
-
-static int retrieve_object(git_walk_object **out, git_packbuilder *pb, const git_oid *id)
-{
-	int error;
-	khiter_t pos;
-	git_walk_object *obj;
-
-	pos = git_oidmap_lookup_index(pb->walk_objects, id);
-	if (git_oidmap_valid_index(pb->walk_objects, pos)) {
-		obj = git_oidmap_value_at(pb->walk_objects, pos);
-	} else {
-		if ((error = lookup_walk_object(&obj, pb, id)) < 0)
-			return error;
-
-		git_oidmap_insert(pb->walk_objects, &obj->id, obj, error);
-	}
-
-	*out = obj;
-	return 0;
-}
-
-static int mark_blob_uninteresting(git_packbuilder *pb, const git_oid *id)
-{
-	int error;
-	git_walk_object *obj;
-
-	if ((error = retrieve_object(&obj, pb, id)) < 0)
-		return error;
-
-	obj->uninteresting = 1;
-
-	return 0;
-}
-
-static int mark_tree_uninteresting(git_packbuilder *pb, const git_oid *id)
-{
-	git_walk_object *obj;
-	git_tree *tree;
-	int error;
-	size_t i;
-
-	if ((error = retrieve_object(&obj, pb, id)) < 0)
-		return error;
-
-	if (obj->uninteresting)
-		return 0;
-
-	obj->uninteresting = 1;
-
-	if ((error = git_tree_lookup(&tree, pb->repo, id)) < 0)
-		return error;
-
-	for (i = 0; i < git_tree_entrycount(tree); i++) {
-		const git_tree_entry *entry = git_tree_entry_byindex(tree, i);
-		const git_oid *entry_id = git_tree_entry_id(entry);
-		switch (git_tree_entry_type(entry)) {
-		case GIT_OBJ_TREE:
-			if ((error = mark_tree_uninteresting(pb, entry_id)) < 0)
-				goto cleanup;
-			break;
-		case GIT_OBJ_BLOB:
-			if ((error = mark_blob_uninteresting(pb, entry_id)) < 0)
-				goto cleanup;
-			break;
-		default:
-			/* it's a submodule or something unknown, we don't want it */
-			;
-		}
-	}
-
-cleanup:
-	git_tree_free(tree);
-	return error;
-}
-
-/*
- * Mark the edges of the graph uninteresting. Since we start from a
- * git_revwalk, the commits are already uninteresting, but we need to
- * mark the trees and blobs.
- */
-static int mark_edges_uninteresting(git_packbuilder *pb, git_commit_list *commits)
-{
-	int error;
-	git_commit_list *list;
-	git_commit *commit;
-
-	for (list = commits; list; list = list->next) {
-		if (!list->item->uninteresting)
-			continue;
-
-		if ((error = git_commit_lookup(&commit, pb->repo, &list->item->oid)) < 0)
-			return error;
-
-		error = mark_tree_uninteresting(pb, git_commit_tree_id(commit));
-		git_commit_free(commit);
-
-		if (error < 0)
-			return error;
-	}
-
-	return 0;
-}
-
-int insert_tree(git_packbuilder *pb, git_tree *tree)
-{
-	size_t i;
-	int error;
-	git_tree *subtree;
-	git_walk_object *obj;
-	const char *name;
-
-	if ((error = retrieve_object(&obj, pb, git_tree_id(tree))) < 0)
-		return error;
-
-	if (obj->seen)
-		return 0;
-
-	obj->seen = 1;
-
-	if ((error = git_packbuilder_insert(pb, &obj->id, NULL)))
-		return error;
-
-	for (i = 0; i < git_tree_entrycount(tree); i++) {
-		const git_tree_entry *entry = git_tree_entry_byindex(tree, i);
-		const git_oid *entry_id = git_tree_entry_id(entry);
-		switch (git_tree_entry_type(entry)) {
-		case GIT_OBJ_TREE:
-			if ((error = git_tree_lookup(&subtree, pb->repo, entry_id)) < 0)
-				return error;
-
-			error = insert_tree(pb, subtree);
-			git_tree_free(subtree);
-
-			if (error < 0)
-				return error;
-
-			break;
-		case GIT_OBJ_BLOB:
-			name = git_tree_entry_name(entry);
-			if ((error = git_packbuilder_insert(pb, entry_id, name)) < 0)
-				return error;
-			break;
-		default:
-			/* it's a submodule or something unknown, we don't want it */
-			;
-		}
-	}
-
-
-	return error;
-}
-
-int insert_commit(git_packbuilder *pb, git_walk_object *obj)
-{
-	int error;
-	git_commit *commit = NULL;
-	git_tree *tree = NULL;
-
-	obj->seen = 1;
-
-	if ((error = git_packbuilder_insert(pb, &obj->id, NULL)) < 0)
-		return error;
-
-	if ((error = git_commit_lookup(&commit, pb->repo, &obj->id)) < 0)
-		return error;
-
-	if ((error = git_tree_lookup(&tree, pb->repo, git_commit_tree_id(commit))) < 0)
-		goto cleanup;
-
-	if ((error = insert_tree(pb, tree)) < 0)
-		goto cleanup;
-
-cleanup:
-	git_commit_free(commit);
-	git_tree_free(tree);
-	return error;
-}
-
-int git_packbuilder_insert_walk(git_packbuilder *pb, git_revwalk *walk)
-{
-	int error;
-	git_oid id;
-	git_walk_object *obj;
-
-	assert(pb && walk);
-
-	if ((error = mark_edges_uninteresting(pb, walk->user_input)) < 0)
-		return error;
-
-	/*
-	 * TODO: git marks the parents of the edges
-	 * uninteresting. This may provide a speed advantage, but does
-	 * seem to assume the remote does not have a single-commit
-	 * history on the other end.
-	 */
-
-	/* walk down each tree up to the blobs and insert them, stopping when uninteresting */
-	while ((error = git_revwalk_next(&id, walk)) == 0) {
-		if ((error = retrieve_object(&obj, pb, &id)) < 0)
-			return error;
-
-		if (obj->seen || obj->uninteresting)
-			continue;
-
-		if ((error = insert_commit(pb, obj)) < 0)
-			return error;
-	}
-
-	if (error == GIT_ITEROVER)
-		error = 0;
-
-	return 0;
 }
 
 int git_packbuilder_set_callbacks(git_packbuilder *pb, git_packbuilder_progress progress_cb, void *progress_cb_payload)
@@ -1742,9 +1417,6 @@ void git_packbuilder_free(git_packbuilder *pb)
 
 	if (pb->object_list)
 		git__free(pb->object_list);
-
-	git_oidmap_free(pb->walk_objects);
-	git_pool_clear(&pb->object_pool);
 
 	git_hash_ctx_cleanup(&pb->ctx);
 	git_zstream_free(&pb->zstream);

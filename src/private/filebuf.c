@@ -68,7 +68,7 @@ static int lock_file(git_filebuf *file, int flags, mode_t mode)
 
 	if ((flags & GIT_FILEBUF_APPEND) && git_path_exists(file->path_original) == true) {
 		git_file source;
-		char buffer[FILEIO_BUFSIZE];
+		char buffer[2048];
 		ssize_t read_bytes;
 
 		source = p_open(file->path_original, O_RDONLY);
@@ -101,7 +101,7 @@ void git_filebuf_cleanup(git_filebuf *file)
 	if (file->fd_is_open && file->fd >= 0)
 		p_close(file->fd);
 
-	if (file->created_lock && !file->did_rename && file->path_lock && git_path_exists(file->path_lock))
+	if (file->fd_is_open && file->path_lock && git_path_exists(file->path_lock))
 		p_unlink(file->path_lock);
 
 	if (file->compute_digest) {
@@ -191,85 +191,10 @@ static int write_deflate(git_filebuf *file, void *source, size_t len)
 	return 0;
 }
 
-#define MAX_SYMLINK_DEPTH 5
-
-static int resolve_symlink(git_buf *out, const char *path)
-{
-	int i, error, root;
-	ssize_t ret;
-	struct stat st;
-	git_buf curpath = GIT_BUF_INIT, target = GIT_BUF_INIT;
-
-	if ((error = git_buf_grow(&target, GIT_PATH_MAX + 1)) < 0 ||
-	    (error = git_buf_puts(&curpath, path)) < 0)
-		return error;
-
-	for (i = 0; i < MAX_SYMLINK_DEPTH; i++) {
-		error = p_lstat(curpath.ptr, &st);
-		if (error < 0 && errno == ENOENT) {
-			error = git_buf_puts(out, curpath.ptr);
-			goto cleanup;
-		}
-
-		if (error < 0) {
-			giterr_set(GITERR_OS, "failed to stat '%s'", curpath.ptr);
-			error = -1;
-			goto cleanup;
-		}
-
-		if (!S_ISLNK(st.st_mode)) {
-			error = git_buf_puts(out, curpath.ptr);
-			goto cleanup;
-		}
-
-		ret = p_readlink(curpath.ptr, target.ptr, GIT_PATH_MAX);
-		if (ret < 0) {
-			giterr_set(GITERR_OS, "failed to read symlink '%s'", curpath.ptr);
-			error = -1;
-			goto cleanup;
-		}
-
-		if (ret == GIT_PATH_MAX) {
-			giterr_set(GITERR_INVALID, "symlink target too long");
-			error = -1;
-			goto cleanup;
-		}
-
-		/* readlink(2) won't NUL-terminate for us */
-		target.ptr[ret] = '\0';
-		target.size = ret;
-
-		root = git_path_root(target.ptr);
-		if (root >= 0) {
-			if ((error = git_buf_puts(&curpath, target.ptr)) < 0)
-				goto cleanup;
-		} else {
-			git_buf dir = GIT_BUF_INIT;
-
-			if ((error = git_path_dirname_r(&dir, curpath.ptr)) < 0)
-				goto cleanup;
-
-			git_buf_swap(&curpath, &dir);
-			git_buf_free(&dir);
-
-			if ((error = git_path_apply_relative(&curpath, target.ptr)) < 0)
-				goto cleanup;
-		}
-	}
-
-	giterr_set(GITERR_INVALID, "maximum symlink depth reached");
-	error = -1;
-
-cleanup:
-	git_buf_free(&curpath);
-	git_buf_free(&target);
-	return error;
-}
-
 int git_filebuf_open(git_filebuf *file, const char *path, int flags, mode_t mode)
 {
 	int compression, error = -1;
-	size_t path_len, alloc_len;
+	size_t path_len;
 
 	/* opening an already open buffer is a programming error;
 	 * assert that this never happens instead of returning
@@ -333,41 +258,28 @@ int git_filebuf_open(git_filebuf *file, const char *path, int flags, mode_t mode
 			goto cleanup;
 		}
 		file->fd_is_open = true;
-		file->created_lock = true;
 
 		/* No original path */
 		file->path_original = NULL;
 		file->path_lock = git_buf_detach(&tmp_path);
 		GITERR_CHECK_ALLOC(file->path_lock);
 	} else {
-		git_buf resolved_path = GIT_BUF_INIT;
-
-		if ((error = resolve_symlink(&resolved_path, path)) < 0)
-			goto cleanup;
+		path_len = strlen(path);
 
 		/* Save the original path of the file */
-		path_len = resolved_path.size;
-		file->path_original = git_buf_detach(&resolved_path);
+		file->path_original = git__strdup(path);
+		GITERR_CHECK_ALLOC(file->path_original);
 
 		/* create the locking path by appending ".lock" to the original */
-		GITERR_CHECK_ALLOC_ADD(&alloc_len, path_len, GIT_FILELOCK_EXTLENGTH);
-		file->path_lock = git__malloc(alloc_len);
+		file->path_lock = git__malloc(path_len + GIT_FILELOCK_EXTLENGTH);
 		GITERR_CHECK_ALLOC(file->path_lock);
 
 		memcpy(file->path_lock, file->path_original, path_len);
 		memcpy(file->path_lock + path_len, GIT_FILELOCK_EXTENSION, GIT_FILELOCK_EXTLENGTH);
 
-		if (git_path_isdir(file->path_original)) {
-			giterr_set(GITERR_FILESYSTEM, "path '%s' is a directory", file->path_original);
-			error = GIT_EDIRECTORY;
-			goto cleanup;
-		}
-
 		/* open the file for locking */
 		if ((error = lock_file(file, flags, mode)) < 0)
 			goto cleanup;
-
-		file->created_lock = true;
 	}
 
 	return 0;
@@ -426,8 +338,6 @@ int git_filebuf_commit(git_filebuf *file)
 		giterr_set(GITERR_OS, "Failed to rename lockfile to '%s'", file->path_original);
 		goto on_error;
 	}
-
-	file->did_rename = true;
 
 	git_filebuf_cleanup(file);
 	return 0;
@@ -497,8 +407,8 @@ int git_filebuf_reserve(git_filebuf *file, void **buffer, size_t len)
 int git_filebuf_printf(git_filebuf *file, const char *format, ...)
 {
 	va_list arglist;
-	size_t space_left, len, alloclen;
-	int written, res;
+	size_t space_left;
+	int len, res;
 	char *tmp_buffer;
 
 	ENSURE_BUF_OK(file);
@@ -507,16 +417,15 @@ int git_filebuf_printf(git_filebuf *file, const char *format, ...)
 
 	do {
 		va_start(arglist, format);
-		written = p_vsnprintf((char *)file->buffer + file->buf_pos, space_left, format, arglist);
+		len = p_vsnprintf((char *)file->buffer + file->buf_pos, space_left, format, arglist);
 		va_end(arglist);
 
-		if (written < 0) {
+		if (len < 0) {
 			file->last_error = BUFERR_MEM;
 			return -1;
 		}
 
-		len = written;
-		if (len + 1 <= space_left) {
+		if ((size_t)len + 1 <= space_left) {
 			file->buf_pos += len;
 			return 0;
 		}
@@ -526,19 +435,19 @@ int git_filebuf_printf(git_filebuf *file, const char *format, ...)
 
 		space_left = file->buf_size - file->buf_pos;
 
-	} while (len + 1 <= space_left);
+	} while ((size_t)len + 1 <= space_left);
 
-	if (GIT_ADD_SIZET_OVERFLOW(&alloclen, len, 1) ||
-		!(tmp_buffer = git__malloc(alloclen))) {
+	tmp_buffer = git__malloc(len + 1);
+	if (!tmp_buffer) {
 		file->last_error = BUFERR_MEM;
 		return -1;
 	}
 
 	va_start(arglist, format);
-	written = p_vsnprintf(tmp_buffer, len + 1, format, arglist);
+	len = p_vsnprintf(tmp_buffer, len + 1, format, arglist);
 	va_end(arglist);
 
-	if (written < 0) {
+	if (len < 0) {
 		git__free(tmp_buffer);
 		file->last_error = BUFERR_MEM;
 		return -1;

@@ -18,7 +18,7 @@
 #include "git2/types.h"
 #include "git2/pack.h"
 
-GIT__USE_OIDMAP
+GIT__USE_OIDMAP;
 
 struct memobject {
 	git_oid oid;
@@ -38,7 +38,6 @@ static int impl__write(git_odb_backend *_backend, const git_oid *oid, const void
 	struct memory_packer_db *db = (struct memory_packer_db *)_backend;
 	struct memobject *obj = NULL; 
 	khiter_t pos;
-	size_t alloc_len;
 	int rval;
 
 	pos = kh_put(oid, db->objects, oid, &rval);
@@ -48,8 +47,7 @@ static int impl__write(git_odb_backend *_backend, const git_oid *oid, const void
 	if (rval == 0)
 		return 0;
 
-	GITERR_CHECK_ALLOC_ADD(&alloc_len, sizeof(struct memobject), len);
-	obj = git__malloc(alloc_len);
+	obj = git__malloc(sizeof(struct memobject) + len);
 	GITERR_CHECK_ALLOC(obj);
 
 	memcpy(obj->data, data, len);
@@ -154,16 +152,12 @@ void git_mempack_reset(git_odb_backend *_backend)
 	});
 
 	git_array_clear(db->commits);
-
-	git_oidmap_clear(db->objects);
 }
 
 static void impl__free(git_odb_backend *_backend)
 {
-	struct memory_packer_db *db = (struct memory_packer_db *)_backend;
-
-	git_oidmap_free(db->objects);
-	git__free(db);
+	git_mempack_reset(_backend);
+	git__free(_backend);
 }
 
 int git_mempack_new(git_odb_backend **out)

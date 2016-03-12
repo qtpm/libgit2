@@ -8,6 +8,24 @@
 #include "common.h"
 #include "utf-conv.h"
 
+#ifndef WC_ERR_INVALID_CHARS
+# define WC_ERR_INVALID_CHARS	0x80
+#endif
+
+GIT_INLINE(DWORD) get_wc_flags(void)
+{
+	static char inited = 0;
+	static DWORD flags;
+
+	/* Invalid code point check supported on Vista+ only */
+	if (!inited) {
+		flags = git_has_win32_version(6, 0, 0) ? WC_ERR_INVALID_CHARS : 0;
+		inited = 1;
+	}
+
+	return flags;
+}
+
 GIT_INLINE(void) git__set_errno(void)
 {
 	if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
@@ -52,7 +70,7 @@ int git__utf16_to_8(char *dest, size_t dest_size, const wchar_t *src)
 	/* Length of -1 indicates NULL termination of the input string. Subtract 1 from the result to
 	 * turn 0 into -1 (an error code) and to not count the NULL terminator as part of the string's
 	 * length. WideCharToMultiByte never returns int's minvalue, so underflow is not possible */
-	if ((len = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, src, -1, dest, (int)dest_size, NULL, NULL) - 1) < 0)
+	if ((len = WideCharToMultiByte(CP_UTF8, get_wc_flags(), src, -1, dest, (int)dest_size, NULL, NULL) - 1) < 0)
 		git__set_errno();
 
 	return len;
@@ -81,7 +99,9 @@ int git__utf8_to_16_alloc(wchar_t **dest, const char *src)
 		return -1;
 	}
 
-	if (!(*dest = git__mallocarray(utf16_size, sizeof(wchar_t)))) {
+	*dest = git__malloc(utf16_size * sizeof(wchar_t));
+
+	if (!*dest) {
 		errno = ENOMEM;
 		return -1;
 	}
@@ -113,11 +133,12 @@ int git__utf8_to_16_alloc(wchar_t **dest, const char *src)
 int git__utf16_to_8_alloc(char **dest, const wchar_t *src)
 {
 	int utf8_size;
+	DWORD dwFlags = get_wc_flags();
 
 	*dest = NULL;
 
 	/* Length of -1 indicates NULL termination of the input string */
-	utf8_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, src, -1, NULL, 0, NULL, NULL);
+	utf8_size = WideCharToMultiByte(CP_UTF8, dwFlags, src, -1, NULL, 0, NULL, NULL);
 
 	if (!utf8_size) {
 		git__set_errno();
@@ -131,7 +152,7 @@ int git__utf16_to_8_alloc(char **dest, const wchar_t *src)
 		return -1;
 	}
 
-	utf8_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, src, -1, *dest, utf8_size, NULL, NULL);
+	utf8_size = WideCharToMultiByte(CP_UTF8, dwFlags, src, -1, *dest, utf8_size, NULL, NULL);
 
 	if (!utf8_size) {
 		git__set_errno();

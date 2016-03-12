@@ -11,8 +11,6 @@
 #include "utf-conv.h"
 #include "repository.h"
 #include "reparse.h"
-#include "global.h"
-#include "buffer.h"
 #include <errno.h>
 #include <io.h>
 #include <fcntl.h>
@@ -35,37 +33,15 @@
  *    inheritable on Windows, so specify the flag to get default behavior back. */
 #define STANDARD_OPEN_FLAGS (_O_BINARY | _O_NOINHERIT)
 
-/* Allowable mode bits on Win32.  Using mode bits that are not supported on
- * Win32 (eg S_IRWXU) is generally ignored, but Wine warns loudly about it
- * so we simply remove them.
- */
-#define WIN32_MODE_MASK (_S_IREAD | _S_IWRITE)
-
 /* GetFinalPathNameByHandleW signature */
 typedef DWORD(WINAPI *PFGetFinalPathNameByHandleW)(HANDLE, LPWSTR, DWORD, DWORD);
 
-/**
- * Truncate or extend file.
- *
- * We now take a "git_off_t" rather than "long" because
- * files may be longer than 2Gb.
- */
-int p_ftruncate(int fd, git_off_t size)
+int p_ftruncate(int fd, long size)
 {
-	if (size < 0) {
-		errno = EINVAL;
-		return -1;
-	}
-
-#if !defined(__MINGW32__) || defined(MINGW_HAS_SECURE_API)
-	return ((_chsize_s(fd, size) == 0) ? 0 : -1);
+#if defined(_MSC_VER) && _MSC_VER >= 1500
+	return _chsize_s(fd, size);
 #else
-	/* TODO MINGW32 Find a replacement for _chsize() that handles big files. */
-	if (size > INT32_MAX) {
-		errno = EFBIG;
-		return -1;
-	}
-	return _chsize(fd, (long)size);
+	return _chsize(fd, size);
 #endif
 }
 
@@ -132,6 +108,88 @@ int p_fsync(int fd)
 	return 0;
 }
 
+GIT_INLINE(time_t) filetime_to_time_t(const FILETIME *ft)
+{
+	long long winTime = ((long long)ft->dwHighDateTime << 32) + ft->dwLowDateTime;
+	winTime -= 116444736000000000LL; /* Windows to Unix Epoch conversion */
+	winTime /= 10000000;		 /* Nano to seconds resolution */
+	return (time_t)winTime;
+}
+
+static bool path_is_volume(wchar_t *target, size_t target_len)
+{
+	return (target_len && wcsncmp(target, L"\\??\\Volume{", 11) == 0);
+}
+
+/* On success, returns the length, in characters, of the path stored in dest.
+ * On failure, returns a negative value. */
+static int readlink_w(
+	git_win32_path dest,
+	const git_win32_path path)
+{
+	BYTE buf[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+	GIT_REPARSE_DATA_BUFFER *reparse_buf = (GIT_REPARSE_DATA_BUFFER *)buf;
+	HANDLE handle = NULL;
+	DWORD ioctl_ret;
+	wchar_t *target;
+	size_t target_len;
+
+	int error = -1;
+
+	handle = CreateFileW(path, GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+		FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+
+	if (handle == INVALID_HANDLE_VALUE) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	if (!DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, NULL, 0,
+		reparse_buf, sizeof(buf), &ioctl_ret, NULL)) {
+		errno = EINVAL;
+		goto on_error;
+	}
+
+	switch (reparse_buf->ReparseTag) {
+	case IO_REPARSE_TAG_SYMLINK:
+		target = reparse_buf->SymbolicLinkReparseBuffer.PathBuffer +
+			(reparse_buf->SymbolicLinkReparseBuffer.SubstituteNameOffset / sizeof(WCHAR));
+		target_len = reparse_buf->SymbolicLinkReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+		break;
+	case IO_REPARSE_TAG_MOUNT_POINT:
+		target = reparse_buf->MountPointReparseBuffer.PathBuffer +
+			(reparse_buf->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR));
+		target_len = reparse_buf->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+		break;
+	default:
+		errno = EINVAL;
+		goto on_error;
+	}
+
+	if (path_is_volume(target, target_len)) {
+		/* This path is a reparse point that represents another volume mounted
+		 * at this location, it is not a symbolic link our input was canonical.
+		 */
+		errno = EINVAL;
+		error = -1;
+	} else if (target_len) {
+		/* The path may need to have a prefix removed. */
+		target_len = git_win32__canonicalize_path(target, target_len);
+
+		/* Need one additional character in the target buffer
+		 * for the terminating NULL. */
+		if (GIT_WIN_PATH_UTF16 > target_len) {
+			wcscpy(dest, target);
+			error = (int)target_len;
+		}
+	}
+
+on_error:
+	CloseHandle(handle);
+	return error;
+}
+
 #define WIN32_IS_WSEP(CH) ((CH) == L'/' || (CH) == L'\\')
 
 static int lstat_w(
@@ -142,25 +200,52 @@ static int lstat_w(
 	WIN32_FILE_ATTRIBUTE_DATA fdata;
 
 	if (GetFileAttributesExW(path, GetFileExInfoStandard, &fdata)) {
+		int fMode = S_IREAD;
+
 		if (!buf)
 			return 0;
 
-		return git_win32__file_attribute_to_stat(buf, &fdata, path);
+		if (fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			fMode |= S_IFDIR;
+		else
+			fMode |= S_IFREG;
+
+		if (!(fdata.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
+			fMode |= S_IWRITE;
+
+		buf->st_ino = 0;
+		buf->st_gid = 0;
+		buf->st_uid = 0;
+		buf->st_nlink = 1;
+		buf->st_mode = (mode_t)fMode;
+		buf->st_size = ((git_off_t)fdata.nFileSizeHigh << 32) + fdata.nFileSizeLow;
+		buf->st_dev = buf->st_rdev = (_getdrive() - 1);
+		buf->st_atime = filetime_to_time_t(&(fdata.ftLastAccessTime));
+		buf->st_mtime = filetime_to_time_t(&(fdata.ftLastWriteTime));
+		buf->st_ctime = filetime_to_time_t(&(fdata.ftCreationTime));
+
+		if (fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+			git_win32_path target;
+
+			if (readlink_w(target, path) >= 0) {
+				buf->st_mode = (buf->st_mode & ~S_IFMT) | S_IFLNK;
+
+				/* st_size gets the UTF-8 length of the target name, in bytes,
+				 * not counting the NULL terminator */
+				if ((buf->st_size = git__utf16_to_8(NULL, 0, target)) < 0)
+					return -1;
+			}
+		}
+
+		return 0;
 	}
 
-	switch (GetLastError()) {
-	case ERROR_ACCESS_DENIED:
-		errno = EACCES;
-		break;
-	default:
-		errno = ENOENT;
-		break;
-	}
+	errno = ENOENT;
 
 	/* To match POSIX behavior, set ENOTDIR when any of the folders in the
 	 * file path is a regular file, otherwise set ENOENT.
 	 */
-	if (errno == ENOENT && posix_enotdir) {
+	if (posix_enotdir) {
 		size_t path_len = wcslen(path);
 
 		/* scan up path until we find an existing item */
@@ -210,44 +295,6 @@ int p_lstat_posixly(const char *filename, struct stat *buf)
 	return do_lstat(filename, buf, true);
 }
 
-int p_utimes(const char *filename, const struct p_timeval times[2])
-{
-	int fd, error;
-
-	if ((fd = p_open(filename, O_RDWR)) < 0)
-		return fd;
-
-	error = p_futimes(fd, times);
-
-	close(fd);
-	return error;
-}
-
-int p_futimes(int fd, const struct p_timeval times[2])
-{
-	HANDLE handle;
-	FILETIME atime = {0}, mtime = {0};
-
-	if (times == NULL) {
-		SYSTEMTIME st;
-
-		GetSystemTime(&st);
-		SystemTimeToFileTime(&st, &atime);
-		SystemTimeToFileTime(&st, &mtime);
-	} else {
-		git_win32__timeval_to_filetime(&atime, times[0]);
-		git_win32__timeval_to_filetime(&mtime, times[1]);
-	}
-
-	if ((handle = (HANDLE)_get_osfhandle(fd)) == INVALID_HANDLE_VALUE)
-		return -1;
-
-	if (SetFileTime(handle, NULL, &atime, &mtime) == 0)
-		return -1;
-
-	return 0;
-}
-
 int p_readlink(const char *path, char *buf, size_t bufsiz)
 {
 	git_win32_path path_w, target_w;
@@ -262,7 +309,7 @@ int p_readlink(const char *path, char *buf, size_t bufsiz)
 	 * we need to buffer the result on the stack. */
 
 	if (git_win32_path_from_utf8(path_w, path) < 0 ||
-		git_win32_path_readlink_w(target_w, path_w) < 0 ||
+		readlink_w(target_w, path_w) < 0 ||
 		(len = git_win32_path_to_utf8(target, target_w)) < 0)
 		return -1;
 
@@ -296,7 +343,7 @@ int p_open(const char *path, int flags, ...)
 		va_end(arg_list);
 	}
 
-	return _wopen(buf, flags | STANDARD_OPEN_FLAGS, mode & WIN32_MODE_MASK);
+	return _wopen(buf, flags | STANDARD_OPEN_FLAGS, mode);
 }
 
 int p_creat(const char *path, mode_t mode)
@@ -306,9 +353,7 @@ int p_creat(const char *path, mode_t mode)
 	if (git_win32_path_from_utf8(buf, path) < 0)
 		return -1;
 
-	return _wopen(buf,
-		_O_WRONLY | _O_CREAT | _O_TRUNC | STANDARD_OPEN_FLAGS,
-		mode & WIN32_MODE_MASK);
+	return _wopen(buf, _O_WRONLY | _O_CREAT | _O_TRUNC | STANDARD_OPEN_FLAGS, mode);
 }
 
 int p_getcwd(char *buffer_out, size_t size)
@@ -398,29 +443,17 @@ static int follow_and_lstat_link(git_win32_path path, struct stat* buf)
 	return lstat_w(target_w, buf, false);
 }
 
-int p_fstat(int fd, struct stat *buf)
-{
-	BY_HANDLE_FILE_INFORMATION fhInfo;
-
-	HANDLE fh = (HANDLE)_get_osfhandle(fd);
-
-	if (fh == INVALID_HANDLE_VALUE ||
-		!GetFileInformationByHandle(fh, &fhInfo)) {
-		errno = EBADF;
-		return -1;
-	}
-
-	git_win32__file_information_to_stat(buf, &fhInfo);
-	return 0;
-}
-
 int p_stat(const char* path, struct stat* buf)
 {
 	git_win32_path path_w;
 	int len;
 
-	if ((len = git_win32_path_from_utf8(path_w, path)) < 0 ||
-		lstat_w(path_w, buf, false) < 0)
+	if ((len = git_win32_path_from_utf8(path_w, path)) < 0)
+		return -1;
+
+	git_win32__path_trim_end(path_w, len);
+
+	if (lstat_w(path_w, buf, false) < 0)
 		return -1;
 
 	/* The item is a symbolic link or mount point. No need to iterate
@@ -578,7 +611,7 @@ int p_access(const char* path, mode_t mode)
 	if (git_win32_path_from_utf8(buf, path) < 0)
 		return -1;
 
-	return _waccess(buf, mode & WIN32_MODE_MASK);
+	return _waccess(buf, mode);
 }
 
 static int ensure_writable(wchar_t *fpath)

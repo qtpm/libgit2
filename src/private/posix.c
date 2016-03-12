@@ -62,11 +62,8 @@ int p_getaddrinfo(
 	ai = ainfo;
 
 	for (p = 1; ainfo->ai_hostent->h_addr_list[p] != NULL; p++) {
-		if (!(ai->ai_next = malloc(sizeof(struct addrinfo)))) {
-			p_freeaddrinfo(ainfo);
-			return -1;
-		}
-		memcpy(ai->ai_next, ainfo, sizeof(struct addrinfo));
+		ai->ai_next = malloc(sizeof(struct addrinfo));
+		memcpy(&ai->ai_next, ainfo, sizeof(struct addrinfo));
 		memcpy(&ai->ai_next->ai_addr_in.sin_addr,
 			ainfo->ai_hostent->h_addr_list[p],
 			ainfo->ai_hostent->h_length);
@@ -158,14 +155,6 @@ ssize_t p_read(git_file fd, void *buf, size_t cnt)
 {
 	char *b = buf;
 
-	if (!git__is_ssizet(cnt)) {
-#ifdef GIT_WIN32
-		SetLastError(ERROR_INVALID_PARAMETER);
-#endif
-		errno = EINVAL;
-		return -1;
-	}
-
 	while (cnt) {
 		ssize_t r;
 #ifdef GIT_WIN32
@@ -240,9 +229,7 @@ int p_mmap(git_map *out, size_t len, int prot, int flags, int fd, git_off_t offs
 	out->data = malloc(len);
 	GITERR_CHECK_ALLOC(out->data);
 
-	if (!git__is_ssizet(len) ||
-		(p_lseek(fd, offset, SEEK_SET) < 0) ||
-		(p_read(fd, out->data, len) != (ssize_t)len)) {
+	if ((p_lseek(fd, offset, SEEK_SET) < 0) || ((size_t)p_read(fd, out->data, len) != len)) {
 		giterr_set(GITERR_OS, "mmap emulation failed");
 		return -1;
 	}

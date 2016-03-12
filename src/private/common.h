@@ -17,11 +17,6 @@
 # define GIT_INLINE(type) static inline type
 #endif
 
-/** Support for gcc/clang __has_builtin intrinsic */
-#ifndef __has_builtin
-# define __has_builtin(x) 0
-#endif
-
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -38,18 +33,12 @@
 # include <direct.h>
 # include <winsock2.h>
 # include <windows.h>
-# include <ws2tcpip.h>
 # include "win32/msvc-compat.h"
 # include "win32/mingw-compat.h"
-# include "win32/win32-compat.h"
 # include "win32/error.h"
 # include "win32/version.h"
 # ifdef GIT_THREADS
 #	include "win32/pthread.h"
-# endif
-# if defined(GIT_MSVC_CRTDBG)
-#   include "win32/w32_stack.h"
-#   include "win32/w32_crtdbg_stacktrace.h"
 # endif
 
 #else
@@ -62,12 +51,6 @@
 # endif
 #define GIT_STDLIB_CALL
 
-#ifdef GIT_USE_STAT_ATIMESPEC
-# define st_atim st_atimespec
-# define st_ctim st_ctimespec
-# define st_mtim st_mtimespec
-#endif
-
 # include <arpa/inet.h>
 
 #endif
@@ -75,24 +58,14 @@
 #include "git2/types.h"
 #include "git2/errors.h"
 #include "thread-utils.h"
-#include "integer.h"
+#include "bswap.h"
 
 #include <regex.h>
-
-#define DEFAULT_BUFSIZE 65536
-#define FILEIO_BUFSIZE DEFAULT_BUFSIZE
-#define FILTERIO_BUFSIZE DEFAULT_BUFSIZE
-#define NETIO_BUFSIZE DEFAULT_BUFSIZE
 
 /**
  * Check a pointer allocation result, returning -1 if it failed.
  */
 #define GITERR_CHECK_ALLOC(ptr) if (ptr == NULL) { return -1; }
-
-/**
- * Check a buffer allocation result, returning -1 if it failed.
- */
-#define GITERR_CHECK_ALLOC_BUF(buf) if ((void *)(buf) == NULL || git_buf_oom(buf)) { return -1; }
 
 /**
  * Check a return value and propagate result if non-zero.
@@ -153,25 +126,20 @@ void giterr_system_set(int code);
  * Structure to preserve libgit2 error state
  */
 typedef struct {
-	int error_code;
-	unsigned int oom : 1;
+	int       error_code;
 	git_error error_msg;
 } git_error_state;
 
 /**
  * Capture current error state to restore later, returning error code.
- * If `error_code` is zero, this does not clear the current error state.
- * You must either restore this error state, or free it.
+ * If `error_code` is zero, this does nothing and returns zero.
  */
-extern int giterr_state_capture(git_error_state *state, int error_code);
+int giterr_capture(git_error_state *state, int error_code);
 
 /**
  * Restore error state to a previous value, returning saved error code.
  */
-extern int giterr_state_restore(git_error_state *state);
-
-/** Free an error state. */
-extern void giterr_state_free(git_error_state *state);
+int giterr_restore(git_error_state *state);
 
 /**
  * Check a versioned structure for validity
@@ -206,32 +174,6 @@ GIT_INLINE(void) git__init_structure(void *structure, size_t len, unsigned int v
 	TYPE _tmpl = TPL; \
 	GITERR_CHECK_VERSION(&(VERSION), _tmpl.version, #TYPE);	\
 	memcpy((PTR), &_tmpl, sizeof(_tmpl)); } while (0)
-
-
-/** Check for additive overflow, setting an error if would occur. */
-#define GIT_ADD_SIZET_OVERFLOW(out, one, two) \
-	(git__add_sizet_overflow(out, one, two) ? (giterr_set_oom(), 1) : 0)
-
-/** Check for additive overflow, setting an error if would occur. */
-#define GIT_MULTIPLY_SIZET_OVERFLOW(out, nelem, elsize) \
-	(git__multiply_sizet_overflow(out, nelem, elsize) ? (giterr_set_oom(), 1) : 0)
-
-/** Check for additive overflow, failing if it would occur. */
-#define GITERR_CHECK_ALLOC_ADD(out, one, two) \
-	if (GIT_ADD_SIZET_OVERFLOW(out, one, two)) { return -1; }
-
-#define GITERR_CHECK_ALLOC_ADD3(out, one, two, three) \
-	if (GIT_ADD_SIZET_OVERFLOW(out, one, two) || \
-		GIT_ADD_SIZET_OVERFLOW(out, *(out), three)) { return -1; }
-
-#define GITERR_CHECK_ALLOC_ADD4(out, one, two, three, four) \
-	if (GIT_ADD_SIZET_OVERFLOW(out, one, two) || \
-		GIT_ADD_SIZET_OVERFLOW(out, *(out), three) || \
-		GIT_ADD_SIZET_OVERFLOW(out, *(out), four)) { return -1; }
-
-/** Check for multiplicative overflow, failing if it would occur. */
-#define GITERR_CHECK_ALLOC_MULTIPLY(out, nelem, elsize) \
-	if (GIT_MULTIPLY_SIZET_OVERFLOW(out, nelem, elsize)) { return -1; }
 
 /* NOTE: other giterr functions are in the public errors.h header file */
 

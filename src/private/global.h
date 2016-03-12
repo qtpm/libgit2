@@ -14,11 +14,10 @@
 typedef struct {
 	git_error *last_error;
 	git_error error_t;
-	git_buf error_buf;
 	char oid_fmt[GIT_OID_HEXSZ+1];
 } git_global_st;
 
-#ifdef GIT_OPENSSL
+#ifdef GIT_SSL
 # include <openssl/ssl.h>
 extern SSL_CTX *git__ssl_ctx;
 #endif
@@ -32,9 +31,5 @@ extern git_mutex git__mwindow_mutex;
 typedef void (*git_global_shutdown_fn)(void);
 
 extern void git__on_shutdown(git_global_shutdown_fn callback);
-
-extern void git__free_tls_data(void);
-
-extern const char *git_libgit2__user_agent(void);
 
 #endif

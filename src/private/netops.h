@@ -11,12 +11,12 @@
 #include "common.h"
 #include "stream.h"
 
-#ifdef GIT_OPENSSL
+#ifdef GIT_SSL
 # include <openssl/ssl.h>
 #endif
 
 typedef struct gitno_ssl {
-#ifdef GIT_OPENSSL
+#ifdef GIT_SSL
 	SSL *ssl;
 #else
 	size_t dummy;

@@ -237,9 +237,9 @@ int git_pathspec__init(git_pathspec *ps, const git_strarray *paths)
 	memset(ps, 0, sizeof(*ps));
 
 	ps->prefix = git_pathspec_prefix(paths);
-	git_pool_init(&ps->pool, 1);
 
-	if ((error = git_pathspec__vinit(&ps->pathspec, paths, &ps->pool)) < 0)
+	if ((error = git_pool_init(&ps->pool, 1, 0)) < 0 ||
+		(error = git_pathspec__vinit(&ps->pathspec, paths, &ps->pool)) < 0)
 		git_pathspec__clear(ps);
 
 	return error;
@@ -296,9 +296,6 @@ int git_pathspec_matches_path(
 
 static void pathspec_match_free(git_pathspec_match_list *m)
 {
-	if (!m)
-		return;
-
 	git_pathspec_free(m->pathspec);
 	m->pathspec = NULL;
 
@@ -312,10 +309,11 @@ static git_pathspec_match_list *pathspec_match_alloc(
 	git_pathspec *ps, int datatype)
 {
 	git_pathspec_match_list *m = git__calloc(1, sizeof(git_pathspec_match_list));
-	if (!m)
-		return NULL;
 
-	git_pool_init(&m->pool, 1);
+	if (m != NULL && git_pool_init(&m->pool, 1, 0) < 0) {
+		pathspec_match_free(m);
+		m = NULL;
+	}
 
 	/* need to keep reference to pathspec and increment refcount because
 	 * failures array stores pointers to the pattern strings of the
@@ -520,16 +518,16 @@ int git_pathspec_match_workdir(
 	uint32_t flags,
 	git_pathspec *ps)
 {
-	git_iterator *iter;
-	git_iterator_options iter_opts = GIT_ITERATOR_OPTIONS_INIT;
 	int error = 0;
+	git_iterator *iter;
 
 	assert(repo);
 
-	iter_opts.flags = pathspec_match_iter_flags(flags);
+	if (!(error = git_iterator_for_workdir(
+			&iter, repo, NULL, NULL, pathspec_match_iter_flags(flags), NULL, NULL))) {
 
-	if (!(error = git_iterator_for_workdir(&iter, repo, NULL, NULL, &iter_opts))) {
 		error = pathspec_match_from_iterator(out, iter, flags, ps);
+
 		git_iterator_free(iter);
 	}
 
@@ -542,16 +540,16 @@ int git_pathspec_match_index(
 	uint32_t flags,
 	git_pathspec *ps)
 {
-	git_iterator *iter;
-	git_iterator_options iter_opts = GIT_ITERATOR_OPTIONS_INIT;
 	int error = 0;
+	git_iterator *iter;
 
 	assert(index);
 
-	iter_opts.flags = pathspec_match_iter_flags(flags);
+	if (!(error = git_iterator_for_index(
+			&iter, index, pathspec_match_iter_flags(flags), NULL, NULL))) {
 
-	if (!(error = git_iterator_for_index(&iter, git_index_owner(index), index, &iter_opts))) {
 		error = pathspec_match_from_iterator(out, iter, flags, ps);
+
 		git_iterator_free(iter);
 	}
 
@@ -564,16 +562,16 @@ int git_pathspec_match_tree(
 	uint32_t flags,
 	git_pathspec *ps)
 {
-	git_iterator *iter;
-	git_iterator_options iter_opts = GIT_ITERATOR_OPTIONS_INIT;
 	int error = 0;
+	git_iterator *iter;
 
 	assert(tree);
 
-	iter_opts.flags = pathspec_match_iter_flags(flags);
+	if (!(error = git_iterator_for_tree(
+			&iter, tree, pathspec_match_iter_flags(flags), NULL, NULL))) {
 
-	if (!(error = git_iterator_for_tree(&iter, tree, &iter_opts))) {
 		error = pathspec_match_from_iterator(out, iter, flags, ps);
+
 		git_iterator_free(iter);
 	}
 
@@ -718,3 +716,4 @@ const char * git_pathspec_match_list_failed_entry(
 
 	return entry ? *entry : NULL;
 }
+

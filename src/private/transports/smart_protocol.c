@@ -51,8 +51,8 @@ int git_smart__store_refs(transport_smart *t, int flushes)
 				return recvd;
 
 			if (recvd == 0 && !flush) {
-				giterr_set(GITERR_NET, "early EOF");
-				return GIT_EEOF;
+				giterr_set(GITERR_NET, "Early EOF");
+				return -1;
 			}
 
 			continue;
@@ -108,7 +108,6 @@ static int append_symref(const char **out, git_vector *symrefs, const char *ptr)
 		if (giterr_last()->klass != GITERR_NOMEMORY)
 			goto on_invalid;
 
-		git__free(mapping);
 		return error;
 	}
 
@@ -121,7 +120,6 @@ static int append_symref(const char **out, git_vector *symrefs, const char *ptr)
 on_invalid:
 	giterr_set(GITERR_NET, "remote sent invalid symref");
 	git_refspec__free(mapping);
-	git__free(mapping);
 	return -1;
 }
 
@@ -687,7 +685,7 @@ static int add_push_report_pkt(git_push *push, git_pkt *pkt)
 
 	switch (pkt->type) {
 		case GIT_PKT_OK:
-			status = git__calloc(1, sizeof(push_status));
+			status = git__calloc(sizeof(push_status), 1);
 			GITERR_CHECK_ALLOC(status);
 			status->msg = NULL;
 			status->ref = git__strdup(((git_pkt_ok *)pkt)->ref);
@@ -698,7 +696,7 @@ static int add_push_report_pkt(git_push *push, git_pkt *pkt)
 			}
 			break;
 		case GIT_PKT_NG:
-			status = git__calloc(1, sizeof(push_status));
+			status = git__calloc(sizeof(push_status), 1);
 			GITERR_CHECK_ALLOC(status);
 			status->ref = git__strdup(((git_pkt_ng *)pkt)->ref);
 			status->msg = git__strdup(((git_pkt_ng *)pkt)->msg);
@@ -771,8 +769,8 @@ static int parse_report(transport_smart *transport, git_push *push)
 				return recvd;
 
 			if (recvd == 0) {
-				giterr_set(GITERR_NET, "early EOF");
-				return GIT_EEOF;
+				giterr_set(GITERR_NET, "Early EOF");
+				return -1;
 			}
 			continue;
 		}
@@ -948,7 +946,7 @@ static int stream_thunk(void *buf, size_t size, void *data)
 	return error;
 }
 
-int git_smart__push(git_transport *transport, git_push *push, const git_remote_callbacks *cbs)
+int git_smart__push(git_transport *transport, git_push *push)
 {
 	transport_smart *t = (transport_smart *)transport;
 	struct push_packbuilder_payload packbuilder_payload = {0};
@@ -959,9 +957,9 @@ int git_smart__push(git_transport *transport, git_push *push, const git_remote_c
 
 	packbuilder_payload.pb = push->pb;
 
-	if (cbs && cbs->push_transfer_progress) {
-		packbuilder_payload.cb = cbs->push_transfer_progress;
-		packbuilder_payload.cb_payload = cbs->payload;
+	if (push->transfer_progress_cb) {
+		packbuilder_payload.cb = push->transfer_progress_cb;
+		packbuilder_payload.cb_payload = push->transfer_progress_cb_payload;
 	}
 
 #ifdef PUSH_DEBUG
@@ -1012,12 +1010,12 @@ int git_smart__push(git_transport *transport, git_push *push, const git_remote_c
 		goto done;
 
 	/* If progress is being reported write the final report */
-	if (cbs && cbs->push_transfer_progress) {
-		error = cbs->push_transfer_progress(
+	if (push->transfer_progress_cb) {
+		error = push->transfer_progress_cb(
 					push->pb->nr_written,
 					push->pb->nr_objects,
 					packbuilder_payload.last_bytes,
-					cbs->payload);
+					push->transfer_progress_cb_payload);
 
 		if (error < 0)
 			goto done;

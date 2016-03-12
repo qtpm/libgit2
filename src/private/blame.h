@@ -31,10 +31,10 @@ typedef struct git_blame__entry {
 	/* the first line of this group in the final image;
 	 * internally all line numbers are 0 based.
 	 */
-	size_t lno;
+	int lno;
 
 	/* how many lines this group has */
-	size_t num_lines;
+	int num_lines;
 
 	/* the commit that introduced this group into the final image */
 	git_blame__origin *suspect;
@@ -51,7 +51,7 @@ typedef struct git_blame__entry {
 	/* the line number of the first line of this group in the
 	 * suspect's file; internally all line numbers are 0 based.
 	 */
-	size_t s_lno;
+	int s_lno;
 
 	/* how significant this entry is -- cached to avoid
 	 * scanning the lines over and over.

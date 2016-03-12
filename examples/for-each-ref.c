@@ -34,7 +34,6 @@ static int show_ref(git_reference *ref, void *data)
 int main(int argc, char **argv)
 {
         git_repository *repo;
-        git_libgit2_init();
 
         if (argc != 1 || argv[1] /* silence -Wunused-parameter */)
                 fatal("Sorry, no for-each-ref options supported yet", NULL);
@@ -43,7 +42,5 @@ int main(int argc, char **argv)
                   "Could not open repository", NULL);
         check_lg2(git_reference_foreach(repo, show_ref, repo),
                   "Could not iterate over references", NULL);
-
-        git_libgit2_shutdown();
         return 0;
 }

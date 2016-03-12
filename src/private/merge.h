@@ -10,7 +10,6 @@
 #include "vector.h"
 #include "commit_list.h"
 #include "pool.h"
-#include "iterator.h"
 
 #include "git2/merge.h"
 #include "git2/types.h"
@@ -19,8 +18,8 @@
 #define GIT_MERGE_MODE_FILE		"MERGE_MODE"
 #define GIT_MERGE_FILE_MODE		0666
 
-#define GIT_MERGE_DEFAULT_RENAME_THRESHOLD	50
-#define GIT_MERGE_DEFAULT_TARGET_LIMIT		1000
+#define GIT_MERGE_TREE_RENAME_THRESHOLD	50
+#define GIT_MERGE_TREE_TARGET_LIMIT		1000
 
 /** Types of changes when files are merged from branch to branch. */
 typedef enum {
@@ -108,6 +107,7 @@ typedef struct {
 	git_index_entry their_entry;
 	git_delta_t their_status;
 
+	int binary:1;
 } git_merge_diff;
 
 int git_merge__bases_many(
@@ -122,11 +122,10 @@ int git_merge__bases_many(
 
 git_merge_diff_list *git_merge_diff_list__alloc(git_repository *repo);
 
-int git_merge_diff_list__find_differences(
-	git_merge_diff_list *merge_diff_list,
-	git_iterator *ancestor_iterator,
-	git_iterator *ours_iter,
-	git_iterator *theirs_iter);
+int git_merge_diff_list__find_differences(git_merge_diff_list *merge_diff_list,
+	const git_tree *ancestor_tree,
+	const git_tree *ours_tree,
+	const git_tree *theirs_tree);
 
 int git_merge_diff_list__find_renames(git_repository *repo, git_merge_diff_list *merge_diff_list, const git_merge_options *opts);
 
@@ -139,14 +138,6 @@ int git_merge__setup(
 	const git_annotated_commit *our_head,
 	const git_annotated_commit *heads[],
 	size_t heads_len);
-
-int git_merge__iterators(
-	git_index **out,
-	git_repository *repo,
-	git_iterator *ancestor_iter,
-	git_iterator *our_iter,
-	git_iterator *their_iter,
-	const git_merge_options *given_opts);
 
 int git_merge__check_result(git_repository *repo, git_index *index_new);
 

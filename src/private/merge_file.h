@@ -4,11 +4,11 @@
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
  */
-#ifndef INCLUDE_curl_stream_h__
-#define INCLUDE_curl_stream_h__
+#ifndef INCLUDE_filediff_h__
+#define INCLUDE_filediff_h__
 
-#include "git2/sys/stream.h"
+#include "xdiff/xdiff.h"
 
-extern int git_curl_stream_new(git_stream **out, const char *host, const char *port);
+#include "git2/merge.h"
 
 #endif

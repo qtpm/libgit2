@@ -90,17 +90,15 @@ GIT_EXTERN(int) git_revwalk_new(git_revwalk **out, git_repository *repo);
 GIT_EXTERN(void) git_revwalk_reset(git_revwalk *walker);
 
 /**
- * Add a new root for the traversal
+ * Mark a commit to start traversal from.
  *
- * The pushed commit will be marked as one of the roots from which to
- * start the walk. This commit may not be walked if it or a child is
- * hidden.
- *
- * At least one commit must be pushed onto the walker before a walk
- * can be started.
- *
- * The given id must belong to a committish on the walked
+ * The given OID must belong to a committish on the walked
  * repository.
+ *
+ * The given commit will be used as one of the roots
+ * when starting the revision walk. At least one commit
+ * must be pushed onto the walker before a walk can
+ * be started.
  *
  * @param walk the walker being used for the traversal.
  * @param id the oid of the commit to start from.
@@ -137,7 +135,7 @@ GIT_EXTERN(int) git_revwalk_push_head(git_revwalk *walk);
 /**
  * Mark a commit (and its ancestors) uninteresting for the output.
  *
- * The given id must belong to a committish on the walked
+ * The given OID must belong to a committish on the walked
  * repository.
  *
  * The resolved commit and all its parents will be hidden from the

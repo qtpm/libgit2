@@ -12,7 +12,6 @@
 #include "vector.h"
 #include "repository.h"
 
-#define GIT_CONFIG_FILENAME_PROGRAMDATA "config"
 #define GIT_CONFIG_FILENAME_SYSTEM "gitconfig"
 #define GIT_CONFIG_FILENAME_GLOBAL ".gitconfig"
 #define GIT_CONFIG_FILENAME_XDG    "config"
@@ -49,7 +48,7 @@ extern int git_config__normalize_name(const char *in, char **out);
 
 /* internal only: does not normalize key and sets out to NULL if not found */
 extern int git_config__lookup_entry(
-	git_config_entry **out,
+	const git_config_entry **out,
 	const git_config *cfg,
 	const char *key,
 	bool no_errors);
@@ -68,7 +67,7 @@ extern int git_config__update_entry(
  * failures occur while trying to access the value.
  */
 
-extern char *git_config__get_string_force(
+extern const char *git_config__get_string_force(
 	const git_config *cfg, const char *key, const char *fallback_value);
 
 extern int git_config__get_bool_force(
@@ -82,26 +81,5 @@ extern int git_config__get_int_force(
  */
 extern int git_config__cvar(
 	int *out, git_config *config, git_cvar_cached cvar);
-
-/**
- * The opposite of git_config_lookup_map_value, we take an enum value
- * and map it to the string or bool value on the config.
- */
-int git_config_lookup_map_enum(git_cvar_t *type_out, const char **str_out,
-			       const git_cvar_map *maps, size_t map_n, int enum_val);
-
-/**
- * Unlock the backend with the highest priority
- *
- * Unlocking will allow other writers to updat the configuration
- * file. Optionally, any changes performed since the lock will be
- * applied to the configuration.
- *
- * @param cfg the configuration
- * @param commit boolean which indicates whether to commit any changes
- * done since locking
- * @return 0 or an error code
- */
-GIT_EXTERN(int) git_config_unlock(git_config *cfg, int commit);
 
 #endif

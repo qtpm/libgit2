@@ -107,10 +107,12 @@ GIT_EXTERN(git_off_t) git_blob_rawsize(const git_blob *blob);
  * The output is written into a `git_buf` which the caller must free
  * when done (via `git_buf_free`).
  *
- * If no filters need to be applied, then the `out` buffer will just
- * be populated with a pointer to the raw content of the blob.  In
- * that case, be careful to *not* free the blob until done with the
- * buffer or copy it into memory you own.
+ * If no filters need to be applied, then the `out` buffer will just be
+ * populated with a pointer to the raw content of the blob.  In that case,
+ * be careful to *not* free the blob until done with the buffer.  To keep
+ * the data detached from the blob, call `git_buf_grow` on the buffer
+ * with a `want_size` of 0 and the buffer will be reallocated to be
+ * detached from the blob.
  *
  * @param out The git_buf to be filled in
  * @param blob Pointer to the blob
@@ -171,8 +173,8 @@ typedef int (*git_blob_chunk_cb)(char *content, size_t max_length, void *payload
  *  - The `callback` must return the number of bytes that have been
  *    written to the `content` buffer.
  *
- *  - When there is no more data to stream, `callback` should return 0.
- *    This will prevent it from being invoked anymore.
+ *  - When there is no more data to stream, `callback` should return
+ *    0. This will prevent it from being invoked anymore.
  *
  *  - If an error occurs, the callback should return a negative value.
  *    This value will be returned to the caller.

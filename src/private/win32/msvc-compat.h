@@ -9,11 +9,11 @@
 
 #if defined(_MSC_VER)
 
+/* 64-bit stat information, regardless of USE_32BIT_TIME_T define */
+#define stat __stat64
+
 typedef unsigned short mode_t;
 typedef SSIZE_T ssize_t;
-
-#define strcasecmp(s1, s2) _stricmp(s1, s2)
-#define strncasecmp(s1, s2, c) _strnicmp(s1, s2, c)
 
 #endif
 

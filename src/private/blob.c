@@ -74,13 +74,12 @@ static int write_file_stream(
 	git_oid *id, git_odb *odb, const char *path, git_off_t file_size)
 {
 	int fd, error;
-	char buffer[FILEIO_BUFSIZE];
+	char buffer[4096];
 	git_odb_stream *stream = NULL;
-	ssize_t read_len = -1;
-	git_off_t written = 0;
+	ssize_t read_len = -1, written = 0;
 
 	if ((error = git_odb_open_wstream(
-			&stream, odb, file_size, GIT_OBJ_BLOB)) < 0)
+			&stream, odb, (size_t)file_size, GIT_OBJ_BLOB)) < 0)
 		return error;
 
 	if ((fd = git_futils_open_ro(path)) < 0) {
@@ -185,12 +184,6 @@ int git_blob__create_from_paths(
 		(error = git_repository_odb(&odb, repo)) < 0)
 		goto done;
 
-	if (S_ISDIR(st.st_mode)) {
-		giterr_set(GITERR_ODB, "cannot create blob from '%s'; it is a directory", content_path);
-		error = GIT_EDIRECTORY;
-		goto done;
-	}
-
 	if (out_st)
 		memcpy(out_st, &st, sizeof(st));
 
@@ -206,7 +199,7 @@ int git_blob__create_from_paths(
 			/* Load the filters for writing this file to the ODB */
 			error = git_filter_list_load(
 				&fl, repo, NULL, hint_path,
-				GIT_FILTER_TO_ODB, GIT_FILTER_DEFAULT);
+				GIT_FILTER_TO_ODB, GIT_FILTER_OPT_DEFAULT);
 
 		if (error < 0)
 			/* well, that didn't work */;
@@ -336,13 +329,15 @@ cleanup:
 
 int git_blob_is_binary(const git_blob *blob)
 {
-	git_buf content = GIT_BUF_INIT;
+	git_buf content;
 
 	assert(blob);
 
-	git_buf_attach_notowned(&content, blob->odb_object->buffer,
-		min(blob->odb_object->cached.size,
-		GIT_FILTER_BYTES_TO_CHECK_NUL));
+	content.ptr   = blob->odb_object->buffer;
+	content.size  =
+		min(blob->odb_object->cached.size, GIT_FILTER_BYTES_TO_CHECK_NUL);
+	content.asize = 0;
+
 	return git_buf_text_is_binary(&content);
 }
 
@@ -364,7 +359,7 @@ int git_blob_filtered_content(
 
 	if (!(error = git_filter_list_load(
 			&fl, git_blob_owner(blob), blob, path,
-			GIT_FILTER_TO_WORKTREE, GIT_FILTER_DEFAULT))) {
+			GIT_FILTER_TO_WORKTREE, GIT_FILTER_OPT_DEFAULT))) {
 
 		error = git_filter_list_apply_to_blob(out, fl, blob);
 

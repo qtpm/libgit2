@@ -84,7 +84,7 @@ void gitno_consume_n(gitno_buffer *buf, size_t cons)
 int gitno__match_host(const char *pattern, const char *host)
 {
 	for (;;) {
-		char c = git__tolower(*pattern++);
+		char c = tolower(*pattern++);
 
 		if (c == '\0')
 			return *host ? -1 : 0;
@@ -102,7 +102,7 @@ int gitno__match_host(const char *pattern, const char *host)
 	 */
 
 			while(*host) {
-				char h = git__tolower(*host);
+				char h = tolower(*host);
 				if (c == h)
 					return gitno__match_host(pattern, host++);
 				if (h == '.')
@@ -112,7 +112,7 @@ int gitno__match_host(const char *pattern, const char *host)
 			return -1;
 		}
 
-		if (c != git__tolower(*host++))
+		if (c != tolower(*host++))
 			return -1;
 	}
 
@@ -261,10 +261,6 @@ int gitno_extract_url_parts(
 		*path = git__substrdup(_path, u.field_data[UF_PATH].len);
 		GITERR_CHECK_ALLOC(*path);
 	} else {
-		git__free(*port);
-		*port = NULL;
-		git__free(*host);
-		*host = NULL;
 		giterr_set(GITERR_NET, "invalid url, missing path");
 		return GIT_EINVALIDSPEC;
 	}

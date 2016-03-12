@@ -13,7 +13,6 @@
  */
 
 #include "common.h"
-#include <assert.h>
 
 /**
  * The following example partially reimplements the `git describe` command
@@ -46,27 +45,6 @@ typedef struct {
 } describe_options;
 
 typedef struct args_info args_info;
-
-static void *xrealloc(void *oldp, size_t newsz)
-{
-	void *p = realloc(oldp, newsz);
-	if (p == NULL) {
-		fprintf(stderr, "Cannot allocate memory, exiting.\n");
-		exit(1);
-	}
-	return p;
-}
-
-static void opts_add_commit(describe_options *opts, const char *commit)
-{
-	size_t sz;
-
-	assert(opts != NULL);
-
-	sz = ++opts->commit_count * sizeof(opts->commits[0]);
-	opts->commits = xrealloc(opts->commits, sz);
-	opts->commits[opts->commit_count - 1] = commit;
-}
 
 static void do_describe_single(git_repository *repo, describe_options *opts, const char *rev)
 {
@@ -118,7 +96,8 @@ static void parse_options(describe_options *opts, int argc, char **argv)
 		const char *curr = argv[args.pos];
 
 		if (curr[0] != '-') {
-			opts_add_commit(opts, curr);
+			opts->commits = (const char **)realloc((void *)opts->commits, ++opts->commit_count);
+			opts->commits[opts->commit_count - 1] = curr;
 		} else if (!strcmp(curr, "--all")) {
 			opts->describe_options.describe_strategy = GIT_DESCRIBE_ALL;
 		} else if (!strcmp(curr, "--tags")) {
@@ -135,8 +114,6 @@ static void parse_options(describe_options *opts, int argc, char **argv)
 		} else if (match_int_arg((int *)&opts->format_options.abbreviated_size, &args, "--abbrev", 0)) {
 		} else if (match_int_arg((int *)&opts->describe_options.max_candidates_tags, &args, "--candidates", 0)) {
 		} else if (match_str_arg(&opts->describe_options.pattern, &args, "--match")) {
-		} else {
-			print_usage();
 		}
 	}
 
@@ -146,7 +123,8 @@ static void parse_options(describe_options *opts, int argc, char **argv)
 	}
 	else {
 		if (!opts->format_options.dirty_suffix || !opts->format_options.dirty_suffix[0]) {
-			opts_add_commit(opts, "HEAD");
+			opts->commits = (const char **)malloc(++opts->commit_count);
+			opts->commits[0] = "HEAD";
 		}
 	}
 }

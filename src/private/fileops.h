@@ -11,9 +11,6 @@
 #include "map.h"
 #include "posix.h"
 #include "path.h"
-#include "pool.h"
-#include "strmap.h"
-#include "oid.h"
 
 /**
  * Filebuffer methods
@@ -22,7 +19,7 @@
  */
 extern int git_futils_readbuffer(git_buf *obj, const char *path);
 extern int git_futils_readbuffer_updated(
-	git_buf *obj, const char *path, git_oid *checksum, int *updated);
+	git_buf *obj, const char *path, time_t *mtime, size_t *size, int *updated);
 extern int git_futils_readbuffer_fd(git_buf *obj, git_file fd, size_t len);
 
 extern int git_futils_writebuffer(
@@ -56,9 +53,12 @@ extern int git_futils_creat_locked(const char *path, const mode_t mode);
 extern int git_futils_creat_locked_withpath(const char *path, const mode_t dirmode, const mode_t mode);
 
 /**
- * Create a path recursively.
+ * Create a path recursively
+ *
+ * If a base parameter is being passed, it's expected to be valued with a
+ * path pointing to an already existing directory.
  */
-extern int git_futils_mkdir_r(const char *path, const mode_t mode);
+extern int git_futils_mkdir_r(const char *path, const char *base, const mode_t mode);
 
 /**
  * Flags to pass to `git_futils_mkdir`.
@@ -95,13 +95,6 @@ struct git_futils_mkdir_perfdata
 	size_t chmod_calls;
 };
 
-struct git_futils_mkdir_options
-{
-	git_strmap *dir_map;
-	git_pool *pool;
-	struct git_futils_mkdir_perfdata perfdata;
-};
-
 /**
  * Create a directory or entire path.
  *
@@ -109,20 +102,20 @@ struct git_futils_mkdir_options
  * and optionally chmods the directory immediately after (or each part of the
  * path if requested).
  *
- * @param path The path to create, relative to base.
+ * @param path The path to create.
  * @param base Root for relative path.  These directories will never be made.
  * @param mode The mode to use for created directories.
  * @param flags Combination of the mkdir flags above.
- * @param opts Extended options, or null.
+ * @param perfdata Performance data, use `git_futils_mkdir` if you don't want this data.
  * @return 0 on success, else error code
  */
-extern int git_futils_mkdir_relative(const char *path, const char *base, mode_t mode, uint32_t flags, struct git_futils_mkdir_options *opts);
+extern int git_futils_mkdir_withperf(const char *path, const char *base, mode_t mode, uint32_t flags, struct git_futils_mkdir_perfdata *perfdata);
 
 /**
- * Create a directory or entire path.  Similar to `git_futils_mkdir_relative`
+ * Create a directory or entire path.  Similar to `git_futils_mkdir_withperf`
  * without performance data.
  */
-extern int git_futils_mkdir(const char *path, mode_t mode, uint32_t flags);
+extern int git_futils_mkdir(const char *path, const char *base, mode_t mode, uint32_t flags);
 
 /**
  * Create all the folders required to contain
@@ -310,7 +303,7 @@ extern int git_futils_fake_symlink(const char *new, const char *old);
  * versions could be implemented in the future.
  */
 typedef struct {
-	struct timespec mtime;
+	git_time_t mtime;
 	git_off_t  size;
 	unsigned int ino;
 } git_futils_filestamp;

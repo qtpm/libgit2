@@ -42,12 +42,6 @@ int git_refspec__parse(git_refspec *refspec, const char *input, bool is_fetch)
 	 */
 	if (!is_fetch && rhs == lhs && rhs[1] == '\0') {
 		refspec->matching = 1;
-		refspec->string = git__strdup(input);
-		GITERR_CHECK_ALLOC(refspec->string);
-		refspec->src = git__strdup("");
-		GITERR_CHECK_ALLOC(refspec->src);
-		refspec->dst = git__strdup("");
-		GITERR_CHECK_ALLOC(refspec->dst);
 		return 0;
 	}
 
@@ -139,10 +133,6 @@ int git_refspec__parse(git_refspec *refspec, const char *input, bool is_fetch)
 	return 0;
 
  invalid:
-        giterr_set(
-                GITERR_INVALID,
-                "'%s' is not a valid refspec.", input);
-        git_refspec__free(refspec);
 	return -1;
 }
 
@@ -154,8 +144,6 @@ void git_refspec__free(git_refspec *refspec)
 	git__free(refspec->src);
 	git__free(refspec->dst);
 	git__free(refspec->string);
-
-	memset(refspec, 0x0, sizeof(git_refspec));
 }
 
 const char *git_refspec_src(const git_refspec *refspec)
@@ -323,8 +311,8 @@ int git_refspec__dwim_one(git_vector *out, git_refspec *spec, git_vector *refs)
 	if (git__prefixcmp(spec->src, GIT_REFS_DIR)) {
 		for (j = 0; formatters[j]; j++) {
 			git_buf_clear(&buf);
-			git_buf_printf(&buf, formatters[j], spec->src);
-			GITERR_CHECK_ALLOC_BUF(&buf);
+			if (git_buf_printf(&buf, formatters[j], spec->src) < 0)
+				return -1;
 
 			key.name = (char *) git_buf_cstr(&buf);
 			if (!git_vector_search(&pos, refs, &key)) {
@@ -348,8 +336,8 @@ int git_refspec__dwim_one(git_vector *out, git_refspec *spec, git_vector *refs)
 			git_buf_puts(&buf, GIT_REFS_HEADS_DIR);
 		}
 
-		git_buf_puts(&buf, spec->dst);
-		GITERR_CHECK_ALLOC_BUF(&buf);
+		if (git_buf_puts(&buf, spec->dst) < 0)
+			return -1;
 
 		cur->dst = git_buf_detach(&buf);
 	}

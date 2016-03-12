@@ -15,7 +15,6 @@
 #include "oidmap.h"
 #include "netops.h"
 #include "zstream.h"
-#include "pool.h"
 
 #include "git2/oid.h"
 #include "git2/pack.h"
@@ -51,12 +50,6 @@ typedef struct git_pobject {
 	    filled:1;
 } git_pobject;
 
-typedef struct {
-	git_oid id;
-	unsigned int uninteresting:1,
-		seen:1;
-} git_walk_object;
-
 struct git_packbuilder {
 	git_repository *repo; /* associated repository */
 	git_odb *odb; /* associated object database */
@@ -65,7 +58,6 @@ struct git_packbuilder {
 	git_zstream zstream;
 
 	uint32_t nr_objects,
-		 nr_deltified,
 		 nr_alloc,
 		 nr_written,
 		 nr_remaining;
@@ -73,9 +65,6 @@ struct git_packbuilder {
 	git_pobject *object_list;
 
 	git_oidmap *object_ix;
-
-	git_oidmap *walk_objects;
-	git_pool object_pool;
 
 	git_oid pack_oid; /* hash of written pack */
 

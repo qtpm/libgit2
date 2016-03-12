@@ -89,9 +89,10 @@ static int diff_file_content_init_common(
 int git_diff_file_content__init_from_diff(
 	git_diff_file_content *fc,
 	git_diff *diff,
-	git_diff_delta *delta,
+	size_t delta_index,
 	bool use_old)
 {
+	git_diff_delta *delta = git_vector_get(&diff->deltas, delta_index);
 	bool has_data = true;
 
 	memset(fc, 0, sizeof(*fc));
@@ -186,7 +187,7 @@ static int diff_file_content_commit_to_str(
 			return error;
 		}
 
-		if ((error = git_submodule_status(&sm_status, fc->repo, fc->file->path, GIT_SUBMODULE_IGNORE_UNSPECIFIED)) < 0) {
+		if ((error = git_submodule_status(&sm_status, sm)) < 0) {
 			git_submodule_free(sm);
 			return error;
 		}
@@ -217,9 +218,7 @@ static int diff_file_content_commit_to_str(
 	return 0;
 }
 
-static int diff_file_content_load_blob(
-	git_diff_file_content *fc,
-	git_diff_options *opts)
+static int diff_file_content_load_blob(git_diff_file_content *fc)
 {
 	int error = 0;
 	git_odb_object *odb_obj = NULL;
@@ -237,8 +236,7 @@ static int diff_file_content_load_blob(
 			return error;
 	}
 
-	if ((opts->flags & GIT_DIFF_SHOW_BINARY) == 0 &&
-		diff_file_content_binary_by_size(fc))
+	if (diff_file_content_binary_by_size(fc))
 		return 0;
 
 	if (odb_obj != NULL) {
@@ -259,35 +257,10 @@ static int diff_file_content_load_blob(
 	return error;
 }
 
-static int diff_file_content_load_workdir_symlink_fake(
-	git_diff_file_content *fc, git_buf *path)
-{
-	git_buf target = GIT_BUF_INIT;
-	int error;
-
-	if ((error = git_futils_readbuffer(&target, path->ptr)) < 0)
-		return error;
-
-	fc->map.len = git_buf_len(&target);
-	fc->map.data = git_buf_detach(&target);
-	fc->flags |= GIT_DIFF_FLAG__FREE_DATA;
-
-	git_buf_free(&target);
-	return error;
-}
-
 static int diff_file_content_load_workdir_symlink(
 	git_diff_file_content *fc, git_buf *path)
 {
 	ssize_t alloc_len, read_len;
-	int symlink_supported, error;
-
-	if ((error = git_repository__cvar(
-		&symlink_supported, fc->repo, GIT_CVAR_SYMLINKS)) < 0)
-		return -1;
-
-	if (!symlink_supported)
-		return diff_file_content_load_workdir_symlink_fake(fc, path);
 
 	/* link path on disk could be UTF-16, so prepare a buffer that is
 	 * big enough to handle some UTF-8 data expansion
@@ -310,9 +283,7 @@ static int diff_file_content_load_workdir_symlink(
 }
 
 static int diff_file_content_load_workdir_file(
-	git_diff_file_content *fc,
-	git_buf *path,
-	git_diff_options *diff_opts)
+	git_diff_file_content *fc, git_buf *path)
 {
 	int error = 0;
 	git_filter_list *fl = NULL;
@@ -326,13 +297,12 @@ static int diff_file_content_load_workdir_file(
 		!(fc->file->size = git_futils_filesize(fd)))
 		goto cleanup;
 
-	if ((diff_opts->flags & GIT_DIFF_SHOW_BINARY) == 0 &&
-		diff_file_content_binary_by_size(fc))
+	if (diff_file_content_binary_by_size(fc))
 		goto cleanup;
 
 	if ((error = git_filter_list_load(
 			&fl, fc->repo, NULL, fc->file->path,
-			GIT_FILTER_TO_ODB, GIT_FILTER_ALLOW_UNSAFE)) < 0)
+			GIT_FILTER_TO_ODB, GIT_FILTER_OPT_ALLOW_UNSAFE)) < 0)
 		goto cleanup;
 
 	/* if there are no filters, try to mmap the file */
@@ -369,9 +339,7 @@ cleanup:
 	return error;
 }
 
-static int diff_file_content_load_workdir(
-	git_diff_file_content *fc,
-	git_diff_options *diff_opts)
+static int diff_file_content_load_workdir(git_diff_file_content *fc)
 {
 	int error = 0;
 	git_buf path = GIT_BUF_INIT;
@@ -389,7 +357,7 @@ static int diff_file_content_load_workdir(
 	if (S_ISLNK(fc->file->mode))
 		error = diff_file_content_load_workdir_symlink(fc, &path);
 	else
-		error = diff_file_content_load_workdir_file(fc, &path, diff_opts);
+		error = diff_file_content_load_workdir_file(fc, &path);
 
 	/* once data is loaded, update OID if we didn't have it previously */
 	if (!error && (fc->file->flags & GIT_DIFF_FLAG_VALID_ID) == 0) {
@@ -402,23 +370,20 @@ static int diff_file_content_load_workdir(
 	return error;
 }
 
-int git_diff_file_content__load(
-	git_diff_file_content *fc,
-	git_diff_options *diff_opts)
+int git_diff_file_content__load(git_diff_file_content *fc)
 {
 	int error = 0;
 
 	if ((fc->flags & GIT_DIFF_FLAG__LOADED) != 0)
 		return 0;
 
-	if ((fc->file->flags & GIT_DIFF_FLAG_BINARY) != 0 &&
-		(diff_opts->flags & GIT_DIFF_SHOW_BINARY) == 0)
+	if ((fc->file->flags & GIT_DIFF_FLAG_BINARY) != 0)
 		return 0;
 
 	if (fc->src == GIT_ITERATOR_TYPE_WORKDIR)
-		error = diff_file_content_load_workdir(fc, diff_opts);
+		error = diff_file_content_load_workdir(fc);
 	else
-		error = diff_file_content_load_blob(fc, diff_opts);
+		error = diff_file_content_load_blob(fc);
 	if (error)
 		return error;
 

@@ -10,7 +10,6 @@
 #include "tag.h"
 #include "merge.h"
 #include "diff.h"
-#include "annotated_commit.h"
 #include "git2/reset.h"
 #include "git2/checkout.h"
 #include "git2/merge.h"
@@ -63,7 +62,6 @@ int git_reset_default(
 
 		assert(delta->status == GIT_DELTA_ADDED ||
 			delta->status == GIT_DELTA_MODIFIED ||
-			delta->status == GIT_DELTA_CONFLICTED ||
 			delta->status == GIT_DELTA_DELETED);
 
 		error = git_index_conflict_remove(index, delta->old_file.path);
@@ -98,19 +96,20 @@ cleanup:
 	return error;
 }
 
-static int reset(
+int git_reset(
 	git_repository *repo,
 	git_object *target,
-	const char *to,
 	git_reset_t reset_type,
-	const git_checkout_options *checkout_opts)
+	git_checkout_options *checkout_opts,
+	const git_signature *signature,
+	const char *log_message)
 {
 	git_object *commit = NULL;
 	git_index *index = NULL;
 	git_tree *tree = NULL;
 	int error = 0;
 	git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
-	git_buf log_message = GIT_BUF_INIT;
+	git_buf log_message_buf = GIT_BUF_INIT;
 
 	assert(repo && target);
 
@@ -142,21 +141,23 @@ static int reset(
 		goto cleanup;
 	}
 
-	if ((error = git_buf_printf(&log_message, "reset: moving to %s", to)) < 0)
-		return error;
+	if (log_message)
+		git_buf_sets(&log_message_buf, log_message);
+	else
+		git_buf_sets(&log_message_buf, "reset: moving");
+
+	/* move HEAD to the new target */
+	if ((error = git_reference__update_terminal(repo, GIT_HEAD_FILE,
+		git_object_id(commit), signature, git_buf_cstr(&log_message_buf))) < 0)
+		goto cleanup;
 
 	if (reset_type == GIT_RESET_HARD) {
-		/* overwrite working directory with the new tree */
-		opts.checkout_strategy = GIT_CHECKOUT_FORCE;
+		/* overwrite working directory with HEAD */
+		opts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_SKIP_UNMERGED;
 
 		if ((error = git_checkout_tree(repo, (git_object *)tree, &opts)) < 0)
 			goto cleanup;
 	}
-
-	/* move HEAD to the new target */
-	if ((error = git_reference__update_terminal(repo, GIT_HEAD_FILE,
-		git_object_id(commit), NULL, git_buf_cstr(&log_message))) < 0)
-		goto cleanup;
 
 	if (reset_type > GIT_RESET_SOFT) {
 		/* reset index to the target content */
@@ -175,25 +176,7 @@ cleanup:
 	git_object_free(commit);
 	git_index_free(index);
 	git_tree_free(tree);
-	git_buf_free(&log_message);
+	git_buf_free(&log_message_buf);
 
 	return error;
-}
-
-int git_reset(
-	git_repository *repo,
-	git_object *target,
-	git_reset_t reset_type,
-	const git_checkout_options *checkout_opts)
-{
-	return reset(repo, target, git_oid_tostr_s(git_object_id(target)), reset_type, checkout_opts);
-}
-
-int git_reset_from_annotated(
-	git_repository *repo,
-	git_annotated_commit *commit,
-	git_reset_t reset_type,
-	const git_checkout_options *checkout_opts)
-{
-	return reset(repo, (git_object *) commit->commit, commit->ref_name, reset_type, checkout_opts);
 }

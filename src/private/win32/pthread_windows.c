@@ -20,8 +20,6 @@ static DWORD WINAPI git_win32__threadproc(LPVOID lpParameter)
 
 	thread->result = thread->proc(thread->param);
 
-	git__free_tls_data();
-
 	return CLEAN_THREAD_EXIT;
 }
 
