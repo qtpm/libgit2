@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.1.0)
 
 # project global setting
 
-project(git2)
+project(libgit2)
 
-set(GIT2_MAJOR_VERSION 0)
-set(GIT2_MINOR_VERSION 22)
-set(GIT2_PATCH_VERSION 1)
-set(GIT2_VERSION
- ${GIT2_MAJOR_VERSION}.${GIT2_MINOR_VERSION}.${GIT2_PATCH_VERSION})
+set(LIBGIT2_MAJOR_VERSION 0)
+set(LIBGIT2_MINOR_VERSION 22)
+set(LIBGIT2_PATCH_VERSION 1)
+set(LIBGIT2_VERSION
+ ${LIBGIT2_MAJOR_VERSION}.${LIBGIT2_MINOR_VERSION}.${LIBGIT2_PATCH_VERSION})
 set(CMAKE_BUILD_TYPE Debug)
 set(WORKDIR "build-debug")
 
@@ -66,10 +66,7 @@ if(WIN32)
 endif(WIN32)
 
 add_library(git2 SHARED ${sources})
-SET_TARGET_PROPERTIES(git2 PROPERTIES VERSION ${GIT2_VERSION} SOVERSION ${GIT2_MAJOR_VERSION})
-
-set(extra_install_dirs src/git2)
-
+SET_TARGET_PROPERTIES(git2 PROPERTIES VERSION ${LIBGIT2_VERSION} SOVERSION ${LIBGIT2_MAJOR_VERSION})
 
 # build examples
 
@@ -84,11 +81,15 @@ endforeach()
 # install setting
 
 install(TARGETS git2 LIBRARY DESTINATION lib)
+
 set(public_headers src/git2.h)
 
-install(FILES ${public_headers} DESTINATION include/git2)
-foreach(dir IN LISTS extra_install_dirs)
+install(FILES ${public_headers} DESTINATION include/libgit2/)
 
-  install(DIRECTORY ${dir} DESTINATION include/git2)
-endforeach()
+set(public_headers__git2 src/git2/annotated_commit.h src/git2/attr.h src/git2/blame.h src/git2/blob.h src/git2/branch.h src/git2/buffer.h src/git2/checkout.h src/git2/cherrypick.h src/git2/clone.h src/git2/commit.h src/git2/common.h src/git2/config.h src/git2/cred_helpers.h src/git2/describe.h src/git2/diff.h src/git2/errors.h src/git2/filter.h src/git2/global.h src/git2/graph.h src/git2/ignore.h src/git2/index.h src/git2/indexer.h src/git2/inttypes.h src/git2/merge.h src/git2/message.h src/git2/net.h src/git2/notes.h src/git2/object.h src/git2/odb.h src/git2/odb_backend.h src/git2/oid.h src/git2/oidarray.h src/git2/pack.h src/git2/patch.h src/git2/pathspec.h src/git2/push.h src/git2/rebase.h src/git2/refdb.h src/git2/reflog.h src/git2/refs.h src/git2/refspec.h src/git2/remote.h src/git2/repository.h src/git2/reset.h src/git2/revert.h src/git2/revparse.h src/git2/revwalk.h src/git2/signature.h src/git2/stash.h src/git2/status.h src/git2/stdint.h src/git2/strarray.h src/git2/submodule.h src/git2/tag.h src/git2/trace.h src/git2/transaction.h src/git2/transport.h src/git2/tree.h src/git2/types.h src/git2/version.h)
 
+install(FILES ${public_headers__git2} DESTINATION include/libgit2/git2)
+
+set(public_headers__git2__sys src/git2/sys/commit.h src/git2/sys/config.h src/git2/sys/diff.h src/git2/sys/filter.h src/git2/sys/hashsig.h src/git2/sys/index.h src/git2/sys/mempack.h src/git2/sys/odb_backend.h src/git2/sys/openssl.h src/git2/sys/refdb_backend.h src/git2/sys/reflog.h src/git2/sys/refs.h src/git2/sys/repository.h src/git2/sys/stream.h src/git2/sys/transport.h)
+
+install(FILES ${public_headers__git2__sys} DESTINATION include/libgit2/git2/sys)
