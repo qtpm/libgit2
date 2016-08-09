@@ -31,6 +31,9 @@ if(MSVC)
 else()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 endif()
+if(DEFINED EMSCRIPTEN)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s BINARYEN_METHOD='native-wasm,asmjs' -s BINARYEN=1")
+endif()
 
 if(APPLE)
     set(CMAKE_MACOSX_RPATH ON)
@@ -62,7 +65,22 @@ include("CMakeExtra.txt" OPTIONAL)
 # build setting
 
 include_directories(src)
-set(sources src/private/annotated_commit.c
+set(sources src/git2/sys/commit.h
+    src/git2/sys/config.h
+    src/git2/sys/diff.h
+    src/git2/sys/filter.h
+    src/git2/sys/hashsig.h
+    src/git2/sys/index.h
+    src/git2/sys/mempack.h
+    src/git2/sys/odb_backend.h
+    src/git2/sys/openssl.h
+    src/git2/sys/refdb_backend.h
+    src/git2/sys/reflog.h
+    src/git2/sys/refs.h
+    src/git2/sys/repository.h
+    src/git2/sys/stream.h
+    src/git2/sys/transport.h
+    src/private/annotated_commit.c
     src/private/annotated_commit.h
     src/private/array.h
     src/private/attr.c
@@ -112,8 +130,11 @@ set(sources src/private/annotated_commit.c
     src/private/deps/http-parser/http_parser.c
     src/private/deps/http-parser/http_parser.h
     src/private/deps/regex/config.h
+    src/private/deps/regex/regcomp.c.h
     src/private/deps/regex/regex.h
+    src/private/deps/regex/regex_internal.c.h
     src/private/deps/regex/regex_internal.h
+    src/private/deps/regex/regexec.c.h
     src/private/deps/zlib/crc32.h
     src/private/deps/zlib/deflate.h
     src/private/deps/zlib/inffast.h
@@ -157,7 +178,6 @@ set(sources src/private/annotated_commit.c
     src/private/hash.c
     src/private/hash.h
     src/private/hash/hash_common_crypto.h
-    src/private/hash/hash_generic.c
     src/private/hash/hash_generic.h
     src/private/hash/hash_openssl.h
     src/private/hash/hash_win32.h
@@ -323,7 +343,8 @@ set(sources src/private/annotated_commit.c
     src/private/zstream.c
     src/private/zstream.h)
 if(UNIX)
-  list(APPEND sources src/private/unix/map_unix.c
+  list(APPEND sources src/private/hash/hash_unix.c
+      src/private/unix/map_unix.c
       src/private/unix/realpath_unix.c)
 endif(UNIX)
 if(WIN32)
@@ -407,21 +428,7 @@ set(public_headers__git2 src/git2/annotated_commit.h
     src/git2/version.h)
 install(FILES ${public_headers__git2} DESTINATION include/libgit2/git2)
 
-set(public_headers__git2__sys src/git2/sys/commit.h
-    src/git2/sys/config.h
-    src/git2/sys/diff.h
-    src/git2/sys/filter.h
-    src/git2/sys/hashsig.h
-    src/git2/sys/index.h
-    src/git2/sys/mempack.h
-    src/git2/sys/odb_backend.h
-    src/git2/sys/openssl.h
-    src/git2/sys/refdb_backend.h
-    src/git2/sys/reflog.h
-    src/git2/sys/refs.h
-    src/git2/sys/repository.h
-    src/git2/sys/stream.h
-    src/git2/sys/transport.h)
+
 install(FILES ${public_headers__git2__sys} DESTINATION include/libgit2/git2/sys)
 
 set(public_headers src/git2.h)

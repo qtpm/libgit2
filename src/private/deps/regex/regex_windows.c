@@ -1,7 +1,7 @@
 /* Extended regular expression matching and search library.
    Copyright (C) 2002, 2003, 2005 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
-   Contributed by Isamu Hasegawa <isamu@yamato.ibm.com>.
+   Contributed by Isamu Hasegawa <isamu@yamato.ibm.c.hom>.
 
    The GNU C Library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Lesser General Public
@@ -66,7 +66,7 @@
 #include <regex.h>
 #include "regex_internal.h"
 
-#include "regex_internal.c"
+#include "regex_internal.c.h"
 
 #ifdef GAWK
 # define bool int
@@ -79,8 +79,8 @@
 #  define false (0)
 # endif
 #endif
-#include "regcomp.c"
-#include "regexec.c"
+#include "regcomp.c.h"
+#include "regexec.c.h"
 
 /* Binary backward compatibility.  */
 #if _LIBC

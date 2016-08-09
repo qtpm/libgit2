@@ -12,7 +12,11 @@ echo "copying src"
 rm -rf src
 mkdir -p src/private/deps/regex
 cp libgit2/deps/regex/*.h src/private/deps/regex
-cp libgit2/deps/regex/regex.c src/private/deps/regex/regex_windows.c
+cat libgit2/deps/regex/regex.c | sed -e "s/\.c/.c.h/" > src/private/deps/regex/regex_windows.c
+cp libgit2/deps/regex/regcomp.c src/private/deps/regex/regcomp.c.h
+cp libgit2/deps/regex/regexec.c src/private/deps/regex/regexec.c.h
+cp libgit2/deps/regex/regex_internal.c src/private/deps/regex/regex_internal.c.h
+
 cp -r libgit2/deps/http-parser src/private/deps/http-parser
 #cp -r libgit2/deps/winhttp src/private/deps/winhttp
 cp -r libgit2/deps/zlib src/private/deps/zlib
