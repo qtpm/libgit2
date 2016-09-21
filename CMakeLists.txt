@@ -65,7 +65,22 @@ include("CMakeExtra.txt" OPTIONAL)
 # build setting
 
 include_directories(src)
-set(sources src/private/annotated_commit.c
+set(sources src/git2/sys/commit.h
+    src/git2/sys/config.h
+    src/git2/sys/diff.h
+    src/git2/sys/filter.h
+    src/git2/sys/hashsig.h
+    src/git2/sys/index.h
+    src/git2/sys/mempack.h
+    src/git2/sys/odb_backend.h
+    src/git2/sys/openssl.h
+    src/git2/sys/refdb_backend.h
+    src/git2/sys/reflog.h
+    src/git2/sys/refs.h
+    src/git2/sys/repository.h
+    src/git2/sys/stream.h
+    src/git2/sys/transport.h
+    src/private/annotated_commit.c
     src/private/annotated_commit.h
     src/private/array.h
     src/private/attr.c
@@ -328,6 +343,17 @@ set(sources src/private/annotated_commit.c
     src/private/xdiff/xutils.h
     src/private/zstream.c
     src/private/zstream.h)
+if(NOT APPLE)
+  list(APPEND sources src/private/deps/zlib/adler32_not_darwin.c
+      src/private/deps/zlib/crc32_not_darwin.c
+      src/private/deps/zlib/deflate_not_darwin.c
+      src/private/deps/zlib/infback_not_darwin.c
+      src/private/deps/zlib/inffast_not_darwin.c
+      src/private/deps/zlib/inflate_not_darwin.c
+      src/private/deps/zlib/inftrees_not_darwin.c
+      src/private/deps/zlib/trees_not_darwin.c
+      src/private/deps/zlib/zutil_not_darwin.c)
+endif(NOT APPLE)
 if(UNIX)
   list(APPEND sources src/private/hash/hash_unix.c
       src/private/unix/map_unix.c
@@ -414,21 +440,7 @@ set(public_headers__git2 src/git2/annotated_commit.h
     src/git2/version.h)
 install(FILES ${public_headers__git2} DESTINATION include/libgit2/git2)
 
-set(public_headers__git2__sys src/git2/sys/commit.h
-    src/git2/sys/config.h
-    src/git2/sys/diff.h
-    src/git2/sys/filter.h
-    src/git2/sys/hashsig.h
-    src/git2/sys/index.h
-    src/git2/sys/mempack.h
-    src/git2/sys/odb_backend.h
-    src/git2/sys/openssl.h
-    src/git2/sys/refdb_backend.h
-    src/git2/sys/reflog.h
-    src/git2/sys/refs.h
-    src/git2/sys/repository.h
-    src/git2/sys/stream.h
-    src/git2/sys/transport.h)
+
 install(FILES ${public_headers__git2__sys} DESTINATION include/libgit2/git2/sys)
 
 set(public_headers src/git2.h)
