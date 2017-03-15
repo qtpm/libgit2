@@ -1,14 +1,15 @@
 # Additional configuration
 # This file is included from auto generated CMakeLists.txt
 include_directories("src/private")
+include_directories("src/private/deps/http-parser")
+
 if(WIN32)
     add_definitions(-DGIT_WIN32)
     add_definitions(-DWIN32_SHA1)
     include_directories("src/private/deps/regex")
-    include_directories("src/private/deps/http-parser")
-else()
-    include_directories("src/private/deps/http-parser")
+    include_directories("src/private/deps/zlib")
 endif()
+
 if(APPLE)
     set(ZLIB_DIR "/usr")
     find_package(ZLIB)

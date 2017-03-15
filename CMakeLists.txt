@@ -378,6 +378,9 @@ add_library(git2 STATIC ${sources})
 
 install(TARGETS git2 ARCHIVE DESTINATION lib)
 
+set(public_headers src/git2.h)
+install(FILES ${public_headers} DESTINATION include/libgit2/)
+
 set(public_headers__git2 src/git2/annotated_commit.h
     src/git2/attr.h
     src/git2/blame.h
@@ -442,6 +445,3 @@ install(FILES ${public_headers__git2} DESTINATION include/libgit2/git2)
 
 
 install(FILES ${public_headers__git2__sys} DESTINATION include/libgit2/git2/sys)
-
-set(public_headers src/git2.h)
-install(FILES ${public_headers} DESTINATION include/libgit2/)
